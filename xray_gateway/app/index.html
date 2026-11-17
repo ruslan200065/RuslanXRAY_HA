@@ -1,6 +1,6 @@
 <!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ruslan Xray Gateway</title><style>
 :root{font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;color:#e2e8f0;background:#0a111e}*{box-sizing:border-box}body{margin:0}.app{max-width:1200px;margin:auto;padding:22px}header{display:flex;align-items:center;justify-content:space-between;padding:16px 0 28px;border-bottom:1px solid #263448}.backbar{padding:8px 0 0}.home-link{display:inline-flex;align-items:center;min-height:42px;padding:8px 14px;color:#c9ddff;text-decoration:none;background:#16273d;border:1px solid #3d587b;border-radius:10px;font-size:14px;font-weight:600}.home-link:hover,.home-link:focus-visible{background:#24466f;color:#fff;outline:2px solid #568bdf;outline-offset:2px}h1{font-size:22px;margin:0}small,.muted{color:#93a4bd}nav{display:flex;gap:8px;flex-wrap:wrap;margin:22px 0}nav button{background:#172338;color:#9fb2d0;border:1px solid #293a56}nav button.on{background:#254677;color:#fff}button{border:1px solid #43629a;background:#2856a1;color:#fff;border-radius:10px;padding:11px 16px;font-size:14px;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}button.secondary{background:#172338}button.danger{background:#73313b;border-color:#a74756}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.card{background:#131f31;border:1px solid #29394e;border-radius:16px;padding:21px;margin-bottom:16px;min-width:0}.card h2{font-size:17px;margin:0 0 14px}.stat{font-size:25px;font-weight:750;margin-top:9px}.field{display:flex;flex-direction:column;gap:8px;margin:15px 0}input,select,textarea{background:#0c1727;border:1px solid #3a506b;border-radius:9px;color:#fff;padding:12px;width:100%;font:inherit}textarea{min-height:190px;font-family:ui-monospace,Consolas,monospace;font-size:12px}label{font-size:13px;color:#b8c9e3}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}.note{padding:14px;border:1px solid #344665;background:#172338;border-radius:12px;color:#b8c9e3;line-height:1.6}.ok{color:#61dbab}.bad{color:#ff9c9c}pre{white-space:pre-wrap;word-break:break-word;background:#0a1422;padding:15px;border-radius:10px;color:#b7d2f4;font-size:12px;max-height:390px;overflow:auto}section{display:none}section.active{display:block}.check{display:flex;align-items:center;gap:8px}.check input{width:auto}.icon{width:43px;height:43px;border-radius:12px;background:#2758a5;display:grid;place-items:center;font-size:22px}.brand{display:flex;align-items:center;gap:13px}#toast{position:sticky;bottom:16px;background:#253e63;border:1px solid #4573bb;border-radius:12px;padding:14px;margin-top:14px;display:none}@media(max-width:720px){.grid{grid-template-columns:1fr}.app{padding:14px}header{padding-bottom:16px}h1{font-size:18px}} </style></head><body><div class="app"><div class="backbar"><a class="home-link" href="/" target="_top" aria-label="Вернуться в Home Assistant">← Назад в Home Assistant</a></div><header><div class="brand"><div class="icon">✦</div><div><h1>Ruslan Xray Gateway</h1><small>HAOS · Xray-core · DHCP · Wi-Fi AP (beta)</small></div></div><span id="health">Проверка…</span></header>
-<nav><button class="on" data-tab="overview">Обзор</button><button data-tab="profiles">Подписка и профили</button><button data-tab="network">Сеть</button><button data-tab="usbwifi">USB Wi-Fi</button><button data-tab="diagnostics">Диагностика</button></nav>
+<nav><button class="on" data-tab="overview">Обзор</button><button data-tab="profiles">Подписка и профили</button><button data-tab="network">Сеть</button><button data-tab="diagnostics">Диагностика</button></nav>
 <section id="overview" class="active"><div class="grid"><div class="card"><small>Состояние</small><div class="stat" id="runState">—</div></div><div class="card"><small>Профиль</small><div class="stat" id="profileState">—</div></div><div class="card"><small>Интерфейсы</small><div class="stat" id="pairState">—</div></div></div><div class="card"><h2>Управление шлюзом</h2><p class="muted">Никакие правила не включаются автоматически. Начинай с проверки профиля и предпросмотра конфигурации.</p><div class="actions"><button id="start">Включить VPN-шлюз</button><button class="danger" id="stop">Остановить</button><button class="secondary" id="refresh">Обновить</button></div></div><div class="note">⚠️ Preview 0.2: TProxy захватывает публичный IPv4 TCP/UDP с выбранного интерфейса и блокирует обычный forward. DHCP и Wi-Fi AP доступны в экспериментальном режиме; проверьте поддержку AP адаптером и сделайте бэкап. Для IPv6 по умолчанию включена блокировка пересылки, но локальный IPv6 трафик на самом интерфейсе остаётся вне VPN.</div></section>
 <section id="profiles"><div class="card"><h2>Подписка Remnawave / Xray JSON</h2><p class="muted">Ссылка хранится на HAOS. В режиме Remnawave запрашивается /json с постоянным X-HWID. После обновления профили можно выбирать из каталога.</p>
 <div class="field"><label>URL подписки</label><input id="suburl" type="password" autocomplete="off" placeholder="https://... (сохранённая ссылка скрыта)"></div>
@@ -15,20 +15,6 @@
 <div class="field"><label>Выходной outbound / balancerTag (пусто = первый VPN/балансировщик)</label><input id="target" placeholder="proxy или balancer:balanced"></div>
 <div class="note">При запуске дополнительных сервисов используется выделенный интерфейс. 5 ГГц использует каналы 36–48 без DFS, если их разрешает драйвер и регион. DFS требует разрешения по действующим правилам региона, поддержки драйвера и может запускаться с задержкой из-за проверки радаров. Wi-Fi AP может конфликтовать с NetworkManager HAOS; используйте отдельный USB Wi-Fi адаптер, поддерживающий AP. IPv6 с клиентского интерфейса блокируется.</div>
 <div class="actions"><button id="save">Сохранить настройки</button><button class="secondary" id="preview">Проверить и показать правила</button></div></div><div class="card"><h2>Обнаруженные интерфейсы</h2><pre id="interfaces">—</pre></div><div class="card"><h2>Предпросмотр правил</h2><pre id="rules">Сохраните сеть и нажмите «Проверить и показать правила»</pre></div></section>
-<section id="usbwifi"><div class="card"><h2>USB Wi-Fi через libusb · RTL8851BU</h2>
-<p class="muted">Экспериментальный драйвер без модуля ядра. Этап 1 — прямое чтение USB-дескрипторов устройства 0bda:b851 и определение точек обмена.</p>
-<div class="note" id="usbUserspaceStatus">Нажми «Проверить USB через libusb».</div>
-<div class="actions"><button id="usbUserspaceProbe">Проверить USB через libusb</button><button id="usbUserspaceClaim" disabled>Тест захвата интерфейса №2</button><button id="usbUserspaceReadPower" disabled>Прочитать регистр питания RTL8851BU</button><button id="usbUserspaceSnapshot" disabled>Снимок регистров RTL8851BU</button></div><pre id="usbClaimResult">Тест захвата ещё не выполнен</pre><pre id="usbRegisterResult">Регистр питания ещё не прочитан</pre><pre id="usbSnapshotResult">Снимок регистров ещё не сделан</pre>
-<pre id="usbUserspaceInfo">—</pre>
-<div class="note">Диагностика читает дескрипторы без захвата. По отдельной кнопке можно кратковременно захватить и освободить только Wi-Fi-интерфейс №2: никакие Wi-Fi команды, firmware и данные в устройство не отправляются; Bluetooth-интерфейсы №0 и №1 не захватываются. Это всё ещё не готовая точка доступа — предстоит портировать инициализацию RTL8851BU и обмен Wi-Fi кадрами.</div>
-</div>
-<div class="card"><h2>Прошивка RTL8851B · userspace</h2>
-<p class="muted">Файл <code>rtw8851b_fw.bin</code> теперь входит в Docker-образ через официальный пакет linux-firmware-rtw89. Проверяем заголовок, версию и SHA-256. Это подготовка к отправке firmware — чип пока не программируется.</p>
-<div class="actions"><button id="usbFirmwareCheck">Проверить прошивку</button></div>
-<div class="note" id="usbFirmwareStatus">Проверка ещё не выполнена</div>
-<pre id="usbFirmwareInfo">—</pre>
-</div>
-</section>
 <section id="diagnostics"><div class="card"><h2>Сетевые маршруты и firewall</h2><div class="actions"><button id="diag">Собрать диагностику</button><button class="danger" id="reset">Сбросить правила нашего шлюза</button></div><pre id="diagOut">—</pre></div></section>
 <div id="toast" role="status"></div></div><script>
 const $=s=>document.querySelector(s);let state=null;function toast(s,bad=false){const e=$('#toast');e.textContent=s;e.style.display='block';e.style.borderColor=bad?'#b75555':'#4573bb'}
@@ -78,22 +64,6 @@ $('#allowdfs').addEventListener('change',()=>updateChannels());
 $('#applycountry').addEventListener('change',()=>updateChannels());
 $('#country').addEventListener('input',()=>updateChannels());
 $('#lan').addEventListener('change',()=>loadChannelCapabilities($('#lan').value));
-async function checkUsbFirmware(){
- const d=await api('usb-wifi/firmware');
- $('#usbFirmwareStatus').textContent=d.message;
- $('#usbFirmwareInfo').textContent=JSON.stringify(d,null,2);
- return d;
-}
-async function loadUserspaceUsb(){
- const d=await api('usb-wifi/userspace');
- $('#usbUserspaceStatus').textContent=d.message;
- $('#usbUserspaceInfo').textContent=JSON.stringify(d,null,2);
- const candidates=(d.devices||[]).flatMap(device=>device.wlan_candidates||[]);
- $('#usbUserspaceClaim').disabled=!(d.status==='usb_transport_available'&&d.devices.length===1&&candidates.length===1&&candidates[0].valid_rtw89_topology&&candidates[0].interface_number===2);
- $('#usbUserspaceReadPower').disabled=$('#usbUserspaceClaim').disabled;
- $('#usbUserspaceSnapshot').disabled=$('#usbUserspaceClaim').disabled;
- return d;
-}
 function handler(id,fn){$(id).addEventListener('click',async()=>{try{await fn()}catch(e){toast(e.message,true)}})}
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));document.querySelectorAll('section').forEach(x=>x.classList.toggle('active',x.id===b.dataset.tab))});
 $('#file').onchange=async e=>{const f=e.target.files[0];if(f)$('#profile').value=await f.text()};
@@ -108,27 +78,4 @@ handler('#stop',async()=>{await api('stop','POST');toast('Шлюз остано�
 handler('#refresh',refresh);
 handler('#reset',async()=>{if(!confirm('Удалить только правила Ruslan Xray Gateway?'))return;await api('reset','POST');toast('Наши правила удалены');await refresh()});
 handler('#diag',async()=>{let d=await api('diagnostics');$('#diagOut').textContent=JSON.stringify(d,null,2)});
-handler('#usbFirmwareCheck',async()=>{await checkUsbFirmware()});
-handler('#usbUserspaceProbe',async()=>{await loadUserspaceUsb()});
-handler('#usbUserspaceReadPower',async()=>{
- if(!confirm('Прочитать один регистр питания 0x0004 RTL8851BU через libusb? Будет отправлен только USB vendor READ. Прошивка, радио и Bluetooth не изменяются.'))return;
- const data=await api('usb-wifi/userspace/read-power','POST');
- $('#usbRegisterResult').textContent=JSON.stringify(data,null,2);
- toast(data.message);
-});
-handler('#usbUserspaceSnapshot',async()=>{
- if(!confirm('Прочитать фиксированный набор регистров питания и USB контроллера RTL8851BU? Операция только читает; прошивка и радио не запускаются.'))return;
- const result=await api('usb-wifi/userspace/snapshot','POST');
- $('#usbSnapshotResult').textContent=JSON.stringify(result,null,2);
- toast(result.message);
-});
-handler('#usbUserspaceClaim',async()=>{
- if(!confirm('Проверить эксклюзивный доступ libusb к Wi-Fi-интерфейсу №2? Интерфейсы Bluetooth №0/1 не трогаем. Команды и firmware в чип не отправляются.'))return;
- const result=await api('usb-wifi/userspace/claim-test','POST');
- $('#usbClaimResult').textContent=JSON.stringify(result,null,2);
- toast(result.message);
- await loadUserspaceUsb();
-});
-
-
-refresh();loadSubscription().catch(e=>toast(e.message,true));loadUserspaceUsb().catch(e=>{$('#usbUserspaceStatus').textContent=e.message});checkUsbFirmware().catch(e=>{$('#usbFirmwareStatus').textContent=e.message});</script></body></html>
+refresh();loadSubscription().catch(e=>toast(e.message,true));</script></body></html>
