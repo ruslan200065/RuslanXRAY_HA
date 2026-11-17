@@ -148,9 +148,21 @@ def reset():
     engine.remove_rules()
     return jsonify({'ok':True})
 
+@app.get('/api/wifi-capabilities')
+def wifi_capabilities():
+    dev=engine.settings().get('downstream','')
+    selected=next((i for i in engine.interfaces() if i['name']==dev and i['wifi']),None)
+    if not selected:return reply_error('Выберите Wi-Fi интерфейс в настройках сети')
+    return jsonify(network.radio_capabilities(dev))
+
 @app.get('/api/diagnostics')
 def diagnostics():
-    return jsonify({'interfaces':engine.interfaces(),
+    wifi={}
+    for item in engine.interfaces():
+        if item['wifi']:
+            try: wifi[item['name']]=network.radio_capabilities(item['name'])
+            except Exception as exc: wifi[item['name']]={'error':str(exc)}
+    return jsonify({'interfaces':engine.interfaces(),'wifi':wifi,
        'routes':engine.run(['ip','-4','route','show'],check=False).stdout[-8000:],
        'rules':engine.run(['nft','list','table','inet',engine.NFT_NAME],check=False).stdout[-8000:],
        'service_logs': {n:(network.RUNTIME/(n+'.log')).read_text(errors='replace')[-3000:] if (network.RUNTIME/(n+'.log')).exists() else '' for n in ('hostapd','dnsmasq')},
