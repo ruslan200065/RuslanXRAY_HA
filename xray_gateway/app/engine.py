@@ -37,7 +37,7 @@ def defaults():
     return {'upstream':'','downstream':'','intercept':False,'port':12345,'block_ipv6':True,
             'client_service':'manual','gateway_cidr':'192.168.50.1/24',
             'dhcp_start':'192.168.50.100','dhcp_end':'192.168.50.200',
-            'wifi_ssid':'RuslanXRAY','wifi_password':'','wifi_channel':6,
+            'wifi_ssid':'RuslanXRAY','wifi_password':'','wifi_band':'2.4','wifi_channel':6,
             'route_mode':'force','target':''}
 
 def settings():
