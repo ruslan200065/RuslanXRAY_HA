@@ -1,7 +1,7 @@
 name: "Ruslan Xray Gateway (Experimental)"
 slug: "ruslan_xray_gateway"
 description: "Universal Xray TProxy gateway with Remnawave subscriptions, Ethernet DHCP and experimental Wi-Fi AP"
-version: "0.3.2"
+version: "0.3.3"
 url: "https://github.com/ruslan200065/RuslanXRAY_HA"
 arch:
   - amd64
