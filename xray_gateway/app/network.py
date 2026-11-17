@@ -81,24 +81,53 @@ def validate_client_settings(cfg, interfaces, current_routes=None):
     return mode, dev, network
 
 
-def verify_ap_radio(dev, band, channel):
-    """Check PHY AP support and the selected 2.4/5 GHz channel."""
+def parse_phy_channels(output):
+    """Parse iw phy output, including fractional MHz and regulatory flags."""
+    result = []
+    for line in output.splitlines():
+        found = re.search(r'(\d+(?:\.\d+)?)\s*MHz\s*\[\s*(\d+)\s*\]', line, re.I)
+        if not found:
+            continue
+        flags = line.lower()
+        result.append({
+            'channel': int(found.group(2)),
+            'frequency_mhz': float(found.group(1)),
+            'disabled': bool(re.search(r'\bdisabled\b', flags)),
+            'no_ir': bool(re.search(r'\bno[\s-]?ir\b|\bpassive scanning\b', flags)),
+            'radar': 'radar detection' in flags,
+        })
+    return result
+
+
+def radio_capabilities(dev):
+    """Return actual AP-capable frequencies, not guessed supported channels."""
     info = run(['iw', 'dev', dev, 'info'], check=False)
     match = re.search(r'\bwiphy\s+(\d+)', info.stdout)
     if info.returncode != 0 or not match:
-        raise ValueError('Не удалось определить Wi-Fi PHY для '+dev+': '+info.stderr[-300:])
+        raise ValueError('Не удалось определить Wi-Fi PHY '+dev+': '+(info.stderr or info.stdout)[-350:])
     phy = run(['iw', 'phy', 'phy'+match.group(1), 'info'], check=False)
     if phy.returncode != 0:
-        raise ValueError('Не удалось получить возможности Wi-Fi адаптера: '+phy.stderr[-300:])
-    if re.search(r'^\s*\* AP\s*$', phy.stdout, flags=re.M) is None:
-        raise ValueError('Wi-Fi адаптер не поддерживает режим точки доступа (AP)')
+        raise ValueError('Не удалось прочитать Wi-Fi PHY: '+(phy.stderr or phy.stdout)[-350:])
+    supports_ap = bool(re.search(r'^\s*\*\s+AP\s*$', phy.stdout, re.M))
+    channels = parse_phy_channels(phy.stdout)
+    return {'device':dev, 'phy':'phy'+match.group(1), 'supports_ap':supports_ap,
+            'channels':channels, 'reg_domain':run(['iw','reg','get'],check=False).stdout[-2000:]}
+
+
+def verify_ap_radio(dev, band, channel):
+    details = radio_capabilities(dev)
+    if not details['supports_ap']:
+        raise ValueError('Адаптер '+dev+' не поддерживает режим точки доступа (AP)')
     freq = 5000 + 5 * channel if band == '5' else 2407 + 5 * channel
-    pattern = rf'\b{freq}\s+MHz\s+\[{channel}\]'
-    entries = [line.lower() for line in phy.stdout.splitlines() if re.search(pattern, line, flags=re.I)]
+    entries = [x for x in details['channels']
+               if x['channel'] == channel and abs(x['frequency_mhz'] - freq) < 0.5]
     if not entries:
-        raise ValueError(f'Адаптер не поддерживает канал {channel} диапазона {band} ГГц')
-    if any(('disabled' in line or 'no ir' in line or 'no-ir' in line) for line in entries):
-        raise ValueError(f'Канал {channel} запрещён для AP настройками Wi-Fi региона/драйвера')
+        found = ', '.join(str(x['channel']) for x in details['channels'] if not x['disabled'])
+        raise ValueError(f'Канал {channel} ({freq} МГц) отсутствует в iw phy {details["phy"]}. '
+                         f'Доступные каналы по драйверу: {found or "нет"}. См. диагностику Wi-Fi')
+    if not any(not x['disabled'] and not x['no_ir'] and not x['radar'] for x in entries):
+        raise ValueError(f'Канал {channel} ({freq} МГц) запрещён для запуска AP '
+                         '(disabled/no-IR/DFS). Проверьте регуляторный домен Wi-Fi')
     return True
 
 
