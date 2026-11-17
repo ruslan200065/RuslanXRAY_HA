@@ -5,7 +5,6 @@ from werkzeug.exceptions import HTTPException
 import engine
 import network
 import subscriptions
-import usbwifi
 import usbuserspace
 import rtw8851b_firmware
 app=Flask(__name__,static_folder=None)
@@ -179,16 +178,6 @@ def usb_userspace_register_snapshot():
     with LOCK:
         return jsonify(usbuserspace.snapshot_chip_registers())
 
-@app.get('/api/usb-wifi')
-def usb_wifi_status():
-    return jsonify(usbwifi.state())
-
-@app.post('/api/usb-wifi/load')
-def usb_wifi_load():
-    # Only the fixed RTL8851BU driver is allowed; no arbitrary module argument.
-    with LOCK:
-        return jsonify(usbwifi.activate())
-
 @app.get('/api/wifi-capabilities')
 def wifi_capabilities():
     dev=request.args.get('device',engine.settings().get('downstream',''))
@@ -203,7 +192,7 @@ def diagnostics():
         if item['wifi']:
             try: wifi[item['name']]=network.radio_capabilities(item['name'])
             except Exception as exc: wifi[item['name']]={'error':str(exc)}
-    return jsonify({'interfaces':engine.interfaces(),'wifi':wifi,'usb_wifi':usbwifi.state(),'usb_userspace':usbuserspace.probe(),'usb_firmware':rtw8851b_firmware.inventory(),
+    return jsonify({'interfaces':engine.interfaces(),'wifi':wifi,'usb_userspace':usbuserspace.probe(),'usb_firmware':rtw8851b_firmware.inventory(),
        'routes':engine.run(['ip','-4','route','show'],check=False).stdout[-8000:],
        'rules':engine.run(['nft','list','table','inet',engine.NFT_NAME],check=False).stdout[-8000:],
        'service_logs': {n:(network.RUNTIME/(n+'.log')).read_text(errors='replace')[-3000:] if (network.RUNTIME/(n+'.log')).exists() else '' for n in ('hostapd','dnsmasq')},
