@@ -10,7 +10,15 @@ from pathlib import Path
 NET_RE = re.compile(r'^[a-zA-Z0-9_.:-]{1,15}$')
 DATA = Path(os.environ.get('GATEWAY_DATA', '/data/ruslan-gateway'))
 RUNTIME = DATA / 'runtime'
-WIFI_CHANNELS = {'2.4': (1, 6, 11), '5': (36, 40, 44, 48)}
+# Expanded primary 20-MHz channels; actual availability comes from iw phy/regdomain.
+WIFI_CHANNELS = {
+    '2.4': tuple(range(1, 14)),
+    '5': (36, 40, 44, 48, 52, 56, 60, 64,
+          100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
+          149, 153, 157, 161, 165),
+}
+DFS_CHANNELS = frozenset((52, 56, 60, 64, 100, 104, 108, 112,
+                          116, 120, 124, 128, 132, 136, 140, 144))
 
 
 
@@ -67,6 +75,11 @@ def validate_client_settings(cfg, interfaces, current_routes=None):
         channel = int(cfg.get('wifi_channel', 6))
         if channel not in WIFI_CHANNELS[band]:
             raise ValueError(f'Канал {channel} недопустим для диапазона {band} ГГц')
+        if band == '5' and channel in DFS_CHANNELS:
+            if not cfg.get('wifi_allow_dfs', False):
+                raise ValueError('Каналы DFS требуют отдельного разрешения')
+            if not cfg.get('wifi_apply_regdomain', False):
+                raise ValueError('Для DFS нужен регион Wi-Fi, применяемый при запуске')
         country = str(cfg.get('wifi_country', '')).strip().upper()
         if country and (not re.fullmatch(r'[A-Z]{2}', country) or country in ('XX', 'ZZ', 'AA')):
             raise ValueError('Укажите реальный код страны из двух латинских букв: RU, DE, FI и т. п.')
@@ -148,7 +161,7 @@ def apply_regdomain(country):
     return (country, previous)
 
 
-def verify_ap_radio(dev, band, channel):
+def verify_ap_radio(dev, band, channel, allow_dfs=False):
     details = radio_capabilities(dev)
     if not details['supports_ap']:
         raise ValueError('Адаптер '+dev+' не поддерживает режим точки доступа (AP)')
@@ -159,7 +172,12 @@ def verify_ap_radio(dev, band, channel):
         found = ', '.join(str(x['channel']) for x in details['channels'] if not x['disabled'])
         raise ValueError(f'Канал {channel} ({freq} МГц) отсутствует в iw phy {details["phy"]}. '
                          f'Доступные каналы по драйверу: {found or "нет"}. См. диагностику Wi-Fi')
-    if not any(not x['disabled'] and not x['no_ir'] and not x['radar'] for x in entries):
+    # On radar channels no-IR may be present until DFS CAC succeeds.
+    # We only permit a CAC attempt when DFS was explicitly enabled.
+    if not any(not x['disabled'] and
+               (not x['radar'] or allow_dfs) and
+               (not x['no_ir'] or (x['radar'] and allow_dfs))
+               for x in entries):
         flags = ', '.join(k for k in ('disabled', 'no_ir', 'radar') if any(x[k] for x in entries))
         raise ValueError(f'Канал {channel} ({freq} МГц) запрещён для AP: {flags}. '
                          'Возможно, драйвер self-managed сохраняет ограничение независимо от выбранной страны.')
@@ -167,7 +185,7 @@ def verify_ap_radio(dev, band, channel):
 
 
 def hostapd_config(cfg):
-    """2.4 / 5 GHz WPA2 CCMP; 5 GHz limited to non-DFS channels."""
+    """20-MHz WPA2 AP; DFS opt-in, CAC handled by hostapd/driver."""
     dev=cfg['downstream']
     ssid=cfg['wifi_ssid']
     password=cfg['wifi_password']
@@ -175,6 +193,9 @@ def hostapd_config(cfg):
     band=str(cfg.get('wifi_band','2.4'))
     if band not in WIFI_CHANNELS or channel not in WIFI_CHANNELS[band]:
         raise ValueError('Некорректный диапазон или канал Wi-Fi')
+    dfs = band == '5' and channel in DFS_CHANNELS
+    if dfs and (not cfg.get('wifi_allow_dfs', False) or not cfg.get('wifi_apply_regdomain', False)):
+        raise ValueError('Для DFS требуется разрешение DFS и применение реальной страны Wi-Fi')
     hw_mode='a' if band == '5' else 'g'
     country = str(cfg.get('wifi_country', '')).strip().upper()
     change_country = bool(cfg.get('wifi_apply_regdomain', False))
@@ -182,8 +203,9 @@ def hostapd_config(cfg):
         raise ValueError('Некорректная страна для hostapd')
     country_lines = f'country_code={country}\nieee80211d=1\n' if change_country else ''
     ht_lines = 'ieee80211n=1\n' if cfg.get('wifi_11n', True) else ''
+    dfs_lines = 'ieee80211h=1\n' if dfs else ''
     return (f'interface={dev}\ndriver=nl80211\nssid2={ssid.encode().hex()}\n'
-            f'hw_mode={hw_mode}\nchannel={channel}\nwmm_enabled=1\n{country_lines}{ht_lines}'
+            f'hw_mode={hw_mode}\nchannel={channel}\nwmm_enabled=1\n{country_lines}{ht_lines}{dfs_lines}'
             f'auth_algs=1\nwpa=2\nwpa_passphrase={password}\nwpa_key_mgmt=WPA-PSK\n'
             f'rsn_pairwise=CCMP\n')
 
@@ -220,7 +242,7 @@ class ClientServices:
             if mode == 'wifi_ap':
                 if cfg.get('wifi_apply_regdomain', False):
                     self.owned_regdomain=apply_regdomain(cfg.get('wifi_country',''))
-                verify_ap_radio(dev, str(cfg.get('wifi_band','2.4')), int(cfg.get('wifi_channel',6)))
+                verify_ap_radio(dev, str(cfg.get('wifi_band','2.4')), int(cfg.get('wifi_channel',6)),\n                                allow_dfs=bool(cfg.get('wifi_allow_dfs', False) and cfg.get('wifi_apply_regdomain', False)))
                 link = json.loads(run(['ip', '-j', 'link', 'show', 'dev', dev]).stdout)[0]
                 if 'UP' not in link.get('flags', []):
                     try:
