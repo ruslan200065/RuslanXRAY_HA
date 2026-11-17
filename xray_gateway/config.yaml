@@ -1,4 +1,4 @@
-name: "Ruslan Xray Gateway (Experimental)"
+name: "Ruslan Xray Gateway"
 slug: "ruslan_xray_gateway"
 description: "Xray VPN gateway: TProxy, Remnawave, Ethernet DHCP and Wi-Fi AP via supported host interfaces"
 version: "0.3.14"
