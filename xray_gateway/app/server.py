@@ -161,6 +161,12 @@ def usb_userspace_claim_test():
     with LOCK:
         return jsonify(usbuserspace.claim_test())
 
+@app.post('/api/usb-wifi/userspace/read-power')
+def usb_userspace_read_power():
+    # Fixed read-only R_AX_SYS_PW_CTRL at 0x0004; user-triggered only.
+    with LOCK:
+        return jsonify(usbuserspace.read_chip_power_register())
+
 @app.get('/api/usb-wifi')
 def usb_wifi_status():
     return jsonify(usbwifi.state())
