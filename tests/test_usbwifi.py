@@ -1,5 +1,8 @@
 import unittest
 from unittest.mock import patch
+import sys
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).parents[1]/'xray_gateway'/'app'))
 import usbwifi
 
 class USBDriverTest(unittest.TestCase):
