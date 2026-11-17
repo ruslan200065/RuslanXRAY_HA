@@ -6,6 +6,8 @@ COPY --from=xray /usr/local/bin/xray /usr/local/bin/xray
 COPY --from=xray /usr/local/share/xray/ /usr/local/share/xray/
 ENV XRAY_LOCATION_ASSET=/usr/local/share/xray
 COPY app /app
+# Reject Python syntax errors during Docker build, before HA can start the add-on.
+RUN python3 -m compileall -q /app
 RUN mkdir -p /data/ruslan-gateway && chmod +x /app/run.sh
 WORKDIR /app
 CMD ["/app/run.sh"]
