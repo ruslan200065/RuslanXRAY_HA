@@ -1,5 +1,6 @@
 import sys,unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 sys.path.insert(0,str(Path(__file__).parents[1]/'xray_gateway'/'app'))
 import network
 DEVICES=[{'name':'eth0','is_default':True,'addresses':['192.168.0.100/24'],'wifi':False},
@@ -129,4 +130,52 @@ class NetworkTest(unittest.TestCase):
             with self.assertRaises(ValueError):network.verify_ap_radio('wlan0','5',100)
             self.assertTrue(network.verify_ap_radio('wlan0','5',100,allow_dfs=True))
             with self.assertRaises(ValueError):network.verify_ap_radio('wlan0','5',36,allow_dfs=True)
+    def test_passive_scan_spelling(self):
+        channel = network.parse_phy_channels(' * 5180 MHz [36] (passive-scan)')[0]
+        self.assertTrue(channel['no_ir'])
+
+    def test_no_ir_cannot_be_ignored_on_self_managed_radio(self):
+        radio = {'supports_ap': True, 'phy': 'phy0', 'driver': 'iwlwifi',
+                 'self_managed': True, 'channels': [
+                     {'channel': 100, 'frequency_mhz': 5500, 'disabled': False,
+                      'no_ir': True, 'radar': True},
+                     {'channel': 36, 'frequency_mhz': 5180, 'disabled': False,
+                      'no_ir': False, 'radar': False},
+                 ]}
+        with patch.object(network, 'radio_capabilities', return_value=radio):
+            with self.assertRaisesRegex(ValueError, 'no-IR'):
+                network.verify_ap_radio('wlan0', '5', 100, allow_dfs=True)
+            self.assertFalse(network.verify_ap_radio('wlan0', '5', 36, allow_dfs=True))
+
+    def test_driver_requires_dfs_even_when_channel_is_not_in_default_dfs_list(self):
+        radio = {'supports_ap': True, 'phy': 'phy0', 'channels': [
+            {'channel': 149, 'frequency_mhz': 5745, 'disabled': False,
+             'no_ir': False, 'radar': True},
+        ]}
+        with patch.object(network, 'radio_capabilities', return_value=radio):
+            with self.assertRaisesRegex(ValueError, 'DFS'):
+                network.verify_ap_radio('wlan0', '5', 149)
+            self.assertTrue(network.verify_ap_radio('wlan0', '5', 149, allow_dfs=True))
+
+    def test_ap_health_requires_enabled_state(self):
+        services = network.ClientServices()
+        services.ap_device = 'wlan0'
+        services.ap_deadline = 10
+        services.daemons = [('hostapd', Mock(poll=Mock(return_value=None)))]
+        with patch.object(network, 'hostapd_state', side_effect=['HT_SCAN', 'DFS', 'DFS', 'ENABLED', 'DISABLED']):
+            with patch.object(network.time, 'monotonic', side_effect=[1, 2, 64, 65, 66]):
+                self.assertEqual(services.ap_health()['phase'], 'starting')
+                self.assertIn('DFS', services.ap_health()['message'])
+                self.assertEqual(services.ap_health()['phase'], 'starting')
+                self.assertEqual(services.ap_health()['phase'], 'ready')
+                self.assertEqual(services.ap_health()['phase'], 'failed')
+
+    def test_live_hostapd_without_control_response_times_out(self):
+        services = network.ClientServices()
+        services.ap_device = 'wlan0'
+        services.ap_deadline = 10
+        with patch.object(network, 'hostapd_state', return_value=''):
+            with patch.object(network.time, 'monotonic', return_value=11):
+                self.assertEqual(services.ap_health()['phase'], 'failed')
+
 if __name__=='__main__':unittest.main()
