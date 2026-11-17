@@ -51,5 +51,51 @@ class DescriptorTest(unittest.TestCase):
         self.assertEqual(status['status'], 'usb_not_mounted')
         self.assertFalse(status['ap_ready'])
 
+
+    def test_actual_rtl8851bu_endpoint_map(self):
+        """Based on the physical 0bda:b851 descriptor supplied by the user."""
+        report={
+            'configurations':[{
+                'value':1,
+                'interfaces':[
+                    {'number':0,'alternate_setting':0,'class':'e0',
+                     'subclass':'01','protocol':'01','endpoints':[
+                        {'address':129,'direction':'in','type':'interrupt'},
+                        {'address':2,'direction':'out','type':'bulk'}]},
+                    {'number':1,'alternate_setting':0,'class':'e0',
+                     'subclass':'01','protocol':'01','endpoints':[
+                        {'address':3,'direction':'out','type':'isochronous'}]},
+                    {'number':2,'alternate_setting':0,'class':'ff',
+                     'subclass':'ff','protocol':'ff','endpoints':[
+                        {'address':132,'direction':'in','type':'bulk'},
+                        *[{'address':n,'direction':'out','type':'bulk'}
+                          for n in (5,6,7,9,10,11,12)]},
+                ],
+            }],
+        }
+        found=usbuserspace.wlan_candidates(report)
+        self.assertEqual(len(found),1)
+        self.assertEqual(found[0]['interface_number'],2)
+        self.assertEqual(found[0]['bulk_in'],[0x84])
+        self.assertEqual(found[0]['bulk_out'],[5,6,7,9,10,11,12])
+        self.assertTrue(found[0]['valid_rtw89_topology'])
+
+    def test_bluetooth_endpoints_not_eligible(self):
+        report={'configurations':[{'value':1,'interfaces':[{
+            'number':0,'alternate_setting':0,'class':'e0','subclass':'01',
+            'protocol':'01','endpoints':[
+                {'address':0x82,'direction':'in','type':'bulk'},
+                {'address':0x02,'direction':'out','type':'bulk'}]}]}]}
+        self.assertEqual(usbuserspace.wlan_candidates(report), [])
+
+    def test_invalid_vendor_topology_not_allowed(self):
+        report={'configurations':[{'value':1,'interfaces':[{
+            'number':2,'alternate_setting':0,'class':'ff','subclass':'ff',
+            'protocol':'ff','endpoints':[
+                {'address':5,'direction':'out','type':'bulk'}]}]}]}
+        result=usbuserspace.wlan_candidates(report)
+        self.assertEqual(len(result),1)
+        self.assertFalse(result[0]['valid_rtw89_topology'])
+
 if __name__ == '__main__':
     unittest.main()
