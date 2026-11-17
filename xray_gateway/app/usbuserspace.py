@@ -44,6 +44,90 @@ def descriptor_report(device):
     }
 
 
+def wlan_candidates(report):
+    """Interpret the descriptors the same way as Linux rtw89_usb_parse.
+
+    The RTL8851BU USB driver is bound only to class ff/subclass ff/protocol ff;
+    Bluetooth uses separate e0 interfaces and MUST NOT be claimed.
+    This is topology validation, not a 802.11 driver or a firmware handshake.
+    """
+    candidates = []
+    for config in report['configurations']:
+        for interface in config['interfaces']:
+            if (interface['alternate_setting'] != 0 or
+                (interface['class'], interface['subclass'], interface['protocol']) !=
+                    ('ff', 'ff', 'ff')):
+                continue
+            bulk_in = [x['address'] for x in interface['endpoints']
+                       if x['type'] == 'bulk' and x['direction'] == 'in']
+            bulk_out = [x['address'] for x in interface['endpoints']
+                        if x['type'] == 'bulk' and x['direction'] == 'out']
+            candidates.append({
+                'interface_number': interface['number'],
+                'configuration': config['value'],
+                'bulk_in': bulk_in,
+                'bulk_out': bulk_out,
+                'valid_rtw89_topology': len(bulk_in) == 1 and len(bulk_out) >= 1,
+                'rx_endpoint': bulk_in[0] if len(bulk_in) == 1 else None,
+                'tx_endpoint_count': len(bulk_out),
+            })
+    return candidates
+
+
+def claim_test():
+    """Explicit, short-lived claim/release of RTL8851BU WLAN ONLY.
+
+    Invoked only on user button press. NO firmware/vendor request,
+    bulk transfer, kernel-driver detaching or configuration change.
+    """
+    try:
+        import usb.core
+        import usb.util
+        from usb.backend import libusb1
+    except ImportError as exc:
+        raise ValueError('PyUSB/libusb недоступен: ' + str(exc))
+    backend = libusb1.get_backend()
+    if backend is None:
+        raise ValueError('libusb backend недоступен')
+    devices = list(usb.core.find(find_all=True, idVendor=VID,
+                                 idProduct=PID, backend=backend) or [])
+    if len(devices) != 1:
+        raise ValueError('Для безопасного теста нужен ровно один RTL8851BU: найдено ' +
+                         str(len(devices)))
+    device = devices[0]
+    report = descriptor_report(device)
+    matches = [c for c in wlan_candidates(report) if c['valid_rtw89_topology']]
+    if len(matches) != 1:
+        raise ValueError('Не найден единственный интерфейс ff:ff:ff с одним Bulk IN '
+                         'и минимум одним Bulk OUT. Захват отменён.')
+    candidate = matches[0]
+    number = candidate['interface_number']
+    if number in (0, 1):
+        raise ValueError('Отказ: обнаружен Bluetooth-интерфейс, захват запрещён')
+    transport = RTL8851BUTransport(device)
+    try:
+        transport.open_wlan(number)
+        return {
+            'status': 'claim_success',
+            'usb_id': '0bda:b851',
+            'interface_number': number,
+            'bulk_in': candidate['bulk_in'],
+            'bulk_out': candidate['bulk_out'],
+            'claimed_and_released': True,
+            'bluetooth_untouched': True,
+            'ap_ready': False,
+            'message': ('Wi-Fi USB-интерфейс #'+str(number)+' успешно захвачен и '
+                        'освобождён через libusb. Bluetooth интерфейсы не тронуты. '
+                        'Радио/прошивка/AP пока не инициализируются.'),
+        }
+    except (OSError, RuntimeError, usb.core.USBError) as exc:
+        raise ValueError('Захват Wi-Fi USB интерфейса #'+str(number)+
+                         ' не удался: '+str(exc))
+    finally:
+        transport.close()
+        usb.util.dispose_resources(device)
+
+
 def probe():
     """Locate 0bda:b851 via libusb. Never use set_configuration/claim_interface."""
     result = {
@@ -78,7 +162,7 @@ def probe():
             result['status'] = 'device_missing'
             result['message'] = 'Realtek 0bda:b851 не обнаружен через libusb'
         else:
-            result['devices'] = [descriptor_report(dev) for dev in devices]
+            result['devices'] = [dict(report, wlan_candidates=wlan_candidates(report)) for report in (descriptor_report(dev) for dev in devices)]
             result['status'] = 'usb_transport_available'
             result['message'] = (
                 'Прямой доступ libusb работает: USB-дескрипторы прочитаны. '
@@ -113,9 +197,14 @@ class RTL8851BUTransport:
             itf for cfg in self.device for itf in cfg
             if int(itf.bInterfaceNumber) == number
             and int(itf.bInterfaceClass) == 0xFF
+            and int(itf.bInterfaceSubClass) == 0xFF
+            and int(itf.bInterfaceProtocol) == 0xFF
+            and int(itf.bAlternateSetting) == 0
         ]
         if not matches:
             raise ValueError('Requested USB interface is not a vendor-specific WLAN candidate')
+        if number in (0, 1):
+            raise ValueError('Bluetooth interfaces cannot be claimed')
         if self.device.is_kernel_driver_active(number):
             raise RuntimeError('USB interface occupied by a kernel driver; refusing to detach automatically')
         usb.util.claim_interface(self.device, number)
