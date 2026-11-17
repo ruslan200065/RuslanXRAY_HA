@@ -2,7 +2,7 @@
 
 Экспериментальное дополнение HAOS на базе [RuslanXRAY OpenWrt](https://github.com/ruslan200065/RuslanXRAY_openwrt). Работает на **x86-64 / aarch64**, не требует Proxmox. Веб-панель на русском языке открывается через авторизованный Home Assistant Ingress.
 
-> **Preview 0.3.10.** Локальные модульные тесты пройдены, но сборка Docker и работа на настоящем HAOS ещё не проверены. До тестирования сделайте полный бэкап и обеспечьте физический доступ к консоли. Boot установлен в manual: приложение не запускает VPN при загрузке автоматически.
+> **Preview 0.3.11.** Локальные модульные тесты пройдены, но сборка Docker и работа на настоящем HAOS ещё не проверены. До тестирования сделайте полный бэкап и обеспечьте физический доступ к консоли. Boot установлен в manual: приложение не запускает VPN при загрузке автоматически.
 
 ## Установка из репозитория
 
@@ -93,3 +93,13 @@ python -m unittest discover -s tests -v
 **Это всё ещё НЕ Wi-Fi-драйвер**. Успешный тест доказывает только возможность пользоваться USB-интерфейсом из контейнера; для рабочего AP потребуется портировать USB control/read/write, инициализацию RTL8851B, firmware H2C/C2H, управление каналами, beacon/WPA и передачу данных. Bluetooth интерфейсы не захватываются, но тест может завершиться ошибкой, если Wi-Fi интерфейс уже занят другим процессом/драйвером.
 
 Источники: [rtw8851bu.c](https://github.com/torvalds/linux/blob/master/drivers/net/wireless/realtek/rtw89/rtw8851bu.c), [rtw89/usb.c](https://github.com/torvalds/linux/blob/master/drivers/net/wireless/realtek/rtw89/usb.c).
+
+## Userspace RTL8851BU: первый регистр (0.3.11)
+
+После успешного теста захвата USB-интерфейса #2 доступен следующий тест **«Прочитать регистр питания RTL8851BU»**. Это реальная USB control vendor-команда, но она выполняется только по явному нажатию, **не автоматически**.
+
+Команда реализует `rtw89_usb_vendorreq` в режиме READ по исходникам ядра Linux: `bmRequestType=0xC0`, `bRequest=0x05`, `wValue=0x0004`, `wIndex=0`, 4 байта, little-endian. Читает `R_AX_SYS_PW_CTRL` (адрес `0x0004`), показывает шестнадцатеричное значение, освобождает только WLAN USB interface #2. Не использует ни один другой адрес и не реализует произвольный register read API через HTTP. На уровне приложения **не отправляет vendor WRITE, не загружает firmware, не делает radio TX**, не захватывает Bluetooth интерфейсы 0/1 и не выполняет reset.
+
+**Состояние:** интерфейс открыт и закрыт в тесте 0.3.10. До получения результата нового USB vendor READ не утверждать, что собственный userspace-драйвер способен управлять RTL8851BU. Успех чтения не означает возможность создать AP: оставшиеся этапы firmware/H2C/C2H/MAC/PHY/802.11 описаны в [плане](docs/RTL8851BU_USERSPACE.md).
+
+Документация протокола: [linux/rtw89/usb.h](https://github.com/torvalds/linux/blob/master/drivers/net/wireless/realtek/rtw89/usb.h), [linux/rtw89/usb.c](https://github.com/torvalds/linux/blob/master/drivers/net/wireless/realtek/rtw89/usb.c), [linux/rtw89/reg.h](https://github.com/torvalds/linux/blob/master/drivers/net/wireless/realtek/rtw89/reg.h).
