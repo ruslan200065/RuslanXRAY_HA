@@ -100,4 +100,33 @@ class NetworkTest(unittest.TestCase):
             self.assertEqual(network.apply_regdomain('FI'),('FI','00'))
         self.assertEqual(calls,[['iw','reg','get'],['iw','reg','set','FI']])
 
+
+    def test_expanded_channel_ranges(self):
+        self.assertEqual(network.WIFI_CHANNELS['2.4'], tuple(range(1,14)))
+        self.assertIn(149, network.WIFI_CHANNELS['5'])
+        self.assertIn(165, network.WIFI_CHANNELS['5'])
+        self.assertIn(100, network.DFS_CHANNELS)
+    def test_upper_5ghz_channel(self):
+        v={**BASE,'downstream':'wlan0','client_service':'wifi_ap',
+           'wifi_ssid':'Test','wifi_password':'12345678','wifi_band':'5','wifi_channel':149}
+        self.assertEqual(network.validate_client_settings(v,DEVICES)[0], 'wifi_ap')
+        self.assertIn('channel=149',network.hostapd_config(v))
+        self.assertNotIn('ieee80211h=1',network.hostapd_config(v))
+    def test_dfs_requires_explicit_opt_in_and_country(self):
+        v={**BASE,'downstream':'wlan0','client_service':'wifi_ap',
+           'wifi_ssid':'Test','wifi_password':'12345678','wifi_band':'5','wifi_channel':100}
+        with self.assertRaises(ValueError):network.validate_client_settings(v,DEVICES)
+        v['wifi_allow_dfs']=True
+        with self.assertRaises(ValueError):network.validate_client_settings(v,DEVICES)
+        v.update(wifi_apply_regdomain=True,wifi_country='FI')
+        self.assertEqual(network.validate_client_settings(v,DEVICES)[0], 'wifi_ap')
+        self.assertIn('ieee80211h=1',network.hostapd_config(v))
+    def test_regdomain_flag_on_dfs(self):
+        from unittest.mock import patch
+        phy={'supports_ap':True,'phy':'phy0','channels':[{'channel':100,
+             'frequency_mhz':5500.0,'disabled':False,'no_ir':True,'radar':True}]}
+        with patch.object(network,'radio_capabilities',return_value=phy):
+            with self.assertRaises(ValueError):network.verify_ap_radio('wlan0','5',100)
+            self.assertTrue(network.verify_ap_radio('wlan0','5',100,allow_dfs=True))
+            with self.assertRaises(ValueError):network.verify_ap_radio('wlan0','5',36,allow_dfs=True)
 if __name__=='__main__':unittest.main()
