@@ -23,6 +23,17 @@ class NetworkTest(unittest.TestCase):
         v['downstream']='wlan0'
         self.assertEqual(network.validate_client_settings(v,DEVICES)[0],'wifi_ap')
         self.assertIn('ssid2=54657374',network.hostapd_config(v))
+    def test_5ghz_ap_configuration(self):
+        v={**BASE,'downstream':'wlan0','client_service':'wifi_ap',
+           'wifi_ssid':'Test5','wifi_password':'12345678','wifi_band':'5','wifi_channel':36}
+        self.assertEqual(network.validate_client_settings(v,DEVICES)[0],'wifi_ap')
+        result=network.hostapd_config(v)
+        self.assertIn('hw_mode=a',result)
+        self.assertIn('channel=36',result)
+    def test_reject_incompatible_band_channel(self):
+        v={**BASE,'downstream':'wlan0','client_service':'wifi_ap',
+           'wifi_ssid':'Test5','wifi_password':'12345678','wifi_band':'5','wifi_channel':6}
+        with self.assertRaises(ValueError):network.validate_client_settings(v,DEVICES)
     def test_reject_wifi_injection(self):
         v={**BASE,'downstream':'wlan0','client_service':'wifi_ap',
            'wifi_ssid':'Unsafe\nbridge=eth0','wifi_password':'12345678'}
