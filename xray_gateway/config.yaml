@@ -1,0 +1,22 @@
+name: "Ruslan Xray Gateway (Experimental)"
+slug: "ruslan_xray_gateway"
+description: "Universal Xray TProxy gateway with Ethernet DHCP and experimental Wi-Fi AP"
+version: "0.2.0"
+url: "https://github.com/ruslan200065/RuslanXRAY_HA"
+arch:
+  - amd64
+  - aarch64
+startup: services
+boot: manual
+init: false
+host_network: true
+privileged:
+  - NET_ADMIN
+  - NET_RAW
+ingress: true
+ingress_port: 0
+panel_icon: mdi:shield-lock
+panel_title: "Xray Gateway"
+map:
+  - type: addon_config
+    read_only: false
