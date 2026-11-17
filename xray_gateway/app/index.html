@@ -28,12 +28,7 @@
 <div class="note" id="usbFirmwareStatus">Проверка ещё не выполнена</div>
 <pre id="usbFirmwareInfo">—</pre>
 </div>
-<div class="card"><h2>Альтернативный способ: драйвер ядра</h2>
-<p class="muted">Резервный путь через встроенный модуль HAOS rtw89_8851bu. Для выбранного userspace-пути он не нужен.</p>
-<div class="note" id="usbDriverStatus">Нажми «Проверить USB Wi-Fi».</div>
-<div class="actions"><button class="secondary" id="usbCheck">Проверить USB Wi-Fi</button><button id="usbLoad" disabled>Загрузить драйвер</button></div>
-<pre id="usbInfo">—</pre>
-<div class="note">Если драйвера нет в сборке ядра HAOS, дополнение не сможет создать сетевой интерфейс. Для этого нужен модуль, собранный под текущую версию ядра. Если Wi-Fi появился, открой раздел «Сеть» и выбери новый интерфейс для раздачи VPN.</div></div></section>
+</section>
 <section id="diagnostics"><div class="card"><h2>Сетевые маршруты и firewall</h2><div class="actions"><button id="diag">Собрать диагностику</button><button class="danger" id="reset">Сбросить правила нашего шлюза</button></div><pre id="diagOut">—</pre></div></section>
 <div id="toast" role="status"></div></div><script>
 const $=s=>document.querySelector(s);let state=null;function toast(s,bad=false){const e=$('#toast');e.textContent=s;e.style.display='block';e.style.borderColor=bad?'#b75555':'#4573bb'}
@@ -99,13 +94,6 @@ async function loadUserspaceUsb(){
  $('#usbUserspaceSnapshot').disabled=$('#usbUserspaceClaim').disabled;
  return d;
 }
-async function loadUsbWifi(){
- const d=await api('usb-wifi');
- $('#usbDriverStatus').textContent=d.message;
- $('#usbInfo').textContent=JSON.stringify(d,null,2);
- $('#usbLoad').disabled=!(d.module_available&&d.devices.length&&d.status!=='ready');
- return d;
-}
 function handler(id,fn){$(id).addEventListener('click',async()=>{try{await fn()}catch(e){toast(e.message,true)}})}
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));document.querySelectorAll('section').forEach(x=>x.classList.toggle('active',x.id===b.dataset.tab))});
 $('#file').onchange=async e=>{const f=e.target.files[0];if(f)$('#profile').value=await f.text()};
@@ -141,6 +129,6 @@ handler('#usbUserspaceClaim',async()=>{
  toast(result.message);
  await loadUserspaceUsb();
 });
-handler('#usbCheck',async()=>{await loadUsbWifi()});
-handler('#usbLoad',async()=>{const d=await api('usb-wifi/load','POST');toast(d.message,d.status!=='ready');await loadUsbWifi();await refresh()});
-refresh();loadSubscription().catch(e=>toast(e.message,true));loadUsbWifi().catch(e=>{$('#usbDriverStatus').textContent=e.message});loadUserspaceUsb().catch(e=>{$('#usbUserspaceStatus').textContent=e.message});checkUsbFirmware().catch(e=>{$('#usbFirmwareStatus').textContent=e.message});</script></body></html>
+
+
+refresh();loadSubscription().catch(e=>toast(e.message,true));loadUserspaceUsb().catch(e=>{$('#usbUserspaceStatus').textContent=e.message});checkUsbFirmware().catch(e=>{$('#usbFirmwareStatus').textContent=e.message});</script></body></html>
