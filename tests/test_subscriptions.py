@@ -58,4 +58,42 @@ class TestSubscriptions(unittest.TestCase):
                 self.assertEqual(uuid.UUID(repaired).version, 4)
                 self.assertEqual(subscriptions.hwid(), repaired)
 
+    def test_refresh_keeps_selected_profile_when_order_changes(self):
+        first = {'remarks': 'First', 'outbounds': [{'protocol': 'vless'}]}
+        second = {**first, 'remarks': 'Second'}
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with patch.multiple(subscriptions, CATALOG=root/'legacy', CATALOG_SNAPSHOT=root/'catalog.json',
+                                SELECTED=root/'selected.json', CONFIG=root/'config.json'):
+                with patch.object(subscriptions.engine, 'PROFILE', root/'active.json'):
+                    subscriptions.save_json(subscriptions.CATALOG/'0.json', first)
+                    subscriptions.save_json(subscriptions.CATALOG/'1.json', second)
+                    subscriptions.save_json(subscriptions.SELECTED, {'id': 0})
+                    subscriptions.save_json(subscriptions.engine.PROFILE, first)
+                    self.assertFalse(subscriptions.replace_catalog([second, first], 0)['selection_lost'])
+                    self.assertEqual(subscriptions.list_catalog()['selected'], 1)
+                    self.assertEqual(subscriptions.load(subscriptions.engine.PROFILE, None), first)
+                    with self.assertRaisesRegex(ValueError, 'Каталог изменился'):
+                        subscriptions.get_profile(0, subscriptions.profile_fingerprint(first))
+
+    def test_matching_uses_unique_provider_id_for_updates(self):
+        old = {'id': 'unique', 'remarks': 'Paris', 'outbounds': [{'protocol': 'vless'}]}
+        replacement = {**old, 'remarks': 'Paris renewed'}
+        self.assertEqual(subscriptions.matching_profile(old, {0: old}, [replacement]), 0)
+        self.assertIsNone(subscriptions.matching_profile(old, {0: old}, [replacement, replacement]))
+
+    def test_fetch_skips_invalid_profiles(self):
+        from unittest.mock import MagicMock
+        good = {'outbounds': [{'tag': 'vpn', 'protocol': 'vless'}]}
+        bad = {'outbounds': [{'tag': 'fail', 'protocol': 'vless'}]}
+        response = MagicMock()
+        response.geturl.return_value = 'https://example.org/sub'
+        response.read.return_value = json.dumps([None, bad, good]).encode()
+        cfg = {'url': 'https://example.org/sub', 'user_agent': 'test', 'remnawave': False}
+        with patch.object(subscriptions, 'hwid', return_value='id'), \
+             patch.object(subscriptions, 'urlopen') as opener, \
+             patch.object(subscriptions.engine, 'verify_profile', side_effect=[ValueError('bad'), None]):
+            opener.return_value.__enter__.return_value = response
+            self.assertEqual(subscriptions.fetch_catalog(cfg, subscriptions.engine.defaults()), ([good], 2))
+
 if __name__=='__main__':unittest.main()

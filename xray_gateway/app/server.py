@@ -1,5 +1,6 @@
 import json, os, subprocess, threading, time, signal
 from functools import wraps
+from urllib.error import HTTPError, URLError
 from pathlib import Path
 from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.exceptions import HTTPException
@@ -13,6 +14,7 @@ LOCK=threading.RLock()
 PING_LOCK=threading.Lock()
 process=None
 LAST_ERROR=''
+REFRESH = {'state': 'idle'}
 services=network.ClientServices()
 
 def reply_error(e,code=400):return jsonify({'error':str(e)}),code
@@ -112,6 +114,7 @@ def upload_profile():
     engine.verify_profile(effective)
     engine.DATA.mkdir(parents=True,exist_ok=True)
     tmp=engine.PROFILE.with_suffix('.tmp');tmp.write_text(json.dumps(cfg,ensure_ascii=False,indent=2));os.chmod(tmp,0o600);tmp.replace(engine.PROFILE)
+    subscriptions.SELECTED.unlink(missing_ok=True)
     LAST_ERROR=''
     return jsonify({'ok':True,'outbounds':len(cfg['outbounds'])})
 
@@ -133,7 +136,43 @@ def subscription_save():
 @serialized
 def subscription_refresh():
     if gateway_started():return reply_error('Сначала остановите шлюз')
-    return jsonify(subscriptions.update_catalog())
+    global REFRESH
+    if REFRESH['state'] == 'running':
+        return jsonify(REFRESH), 202
+    config = subscriptions.config()
+    if not config['url']:
+        return reply_error('Сначала сохраните URL подписки')
+    REFRESH = {'state': 'running'}
+    threading.Thread(target=refresh_subscription, args=(config, engine.settings()), daemon=True).start()
+    return jsonify(REFRESH), 202
+
+
+@app.get('/api/subscription/refresh')
+@serialized
+def subscription_refresh_status():
+    return jsonify(REFRESH)
+
+
+def refresh_subscription(config, settings):
+    global REFRESH
+    try:
+        profiles, skipped = subscriptions.fetch_catalog(config, settings)
+        with LOCK:
+            if gateway_started() or config != subscriptions.config() or settings != engine.settings():
+                raise ValueError('Настройки изменились во время обновления. Запустите обновление снова.')
+            REFRESH = {'state': 'done', **subscriptions.replace_catalog(profiles, skipped)}
+            return
+    except HTTPError as error:
+        message = f'Сервер подписки вернул HTTP {error.code}.'
+    except (URLError, TimeoutError):
+        message = 'Сервер подписки недоступен. Прежний каталог сохранён.'
+    except ValueError as error:
+        message = str(error)
+    except Exception:
+        app.logger.error('Could not refresh subscription')
+        message = 'Не удалось обновить подписку. Проверьте журнал приложения.'
+    with LOCK:
+        REFRESH = {'state': 'error', 'error': message}
 
 @app.post('/api/subscription/select')
 @serialized
@@ -142,7 +181,7 @@ def subscription_select():
     obj = request.get_json()
     if not isinstance(obj, dict):
         return reply_error('Ожидается объект с ID профиля')
-    return jsonify(subscriptions.select_profile(obj.get('id')))
+    return jsonify(subscriptions.select_profile(obj.get('id'), obj.get('revision')))
 
 @app.post('/api/ping')
 def ping():
@@ -159,7 +198,7 @@ def ping():
                     return reply_error('Сначала выберите профиль')
                 profile = subscriptions.load(engine.PROFILE, None)
             else:
-                profile = subscriptions.get_profile(profile_id)
+                profile = subscriptions.get_profile(profile_id, obj.get('revision'))
             settings = engine.settings()
         return jsonify({'milliseconds': latency.measure(profile, settings)})
     finally:
