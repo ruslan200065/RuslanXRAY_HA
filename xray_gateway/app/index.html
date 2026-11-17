@@ -15,7 +15,15 @@
 <div class="field"><label>Выходной outbound / balancerTag (пусто = первый VPN/балансировщик)</label><input id="target" placeholder="proxy или balancer:balanced"></div>
 <div class="note">При запуске дополнительных сервисов используется выделенный интерфейс. 5 ГГц использует каналы 36–48 без DFS, если их разрешает драйвер и регион. DFS требует разрешения по действующим правилам региона, поддержки драйвера и может запускаться с задержкой из-за проверки радаров. Wi-Fi AP может конфликтовать с NetworkManager HAOS; используйте отдельный USB Wi-Fi адаптер, поддерживающий AP. IPv6 с клиентского интерфейса блокируется.</div>
 <div class="actions"><button id="save">Сохранить настройки</button><button class="secondary" id="preview">Проверить и показать правила</button></div></div><div class="card"><h2>Обнаруженные интерфейсы</h2><pre id="interfaces">—</pre></div><div class="card"><h2>Предпросмотр правил</h2><pre id="rules">Сохраните сеть и нажмите «Проверить и показать правила»</pre></div></section>
-<section id="usbwifi"><div class="card"><h2>USB Wi-Fi · Realtek RTL8851BU</h2><p class="muted">Адаптер 0bda:b851. Проверяем ядро HAOS и пробуем загрузить штатный модуль rtw89_8851bu. Никакие сторонние драйверы из интернета не устанавливаются.</p>
+<section id="usbwifi"><div class="card"><h2>USB Wi-Fi через libusb · RTL8851BU</h2>
+<p class="muted">Экспериментальный драйвер без модуля ядра. Этап 1 — прямое чтение USB-дескрипторов устройства 0bda:b851 и определение точек обмена.</p>
+<div class="note" id="usbUserspaceStatus">Нажми «Проверить USB через libusb».</div>
+<div class="actions"><button id="usbUserspaceProbe">Проверить USB через libusb</button></div>
+<pre id="usbUserspaceInfo">—</pre>
+<div class="note">Это реальный доступ к USB через libusb, но пока не готовая точка доступа: для RTL8851BU предстоит перенести работу с прошивкой, чипом и Wi-Fi кадрами в userspace. Сейчас приложение не захватывает устройство и не мешает Bluetooth.</div>
+</div>
+<div class="card"><h2>Альтернативный способ: драйвер ядра</h2>
+<p class="muted">Резервный путь через встроенный модуль HAOS rtw89_8851bu. Для выбранного userspace-пути он не нужен.</p>
 <div class="note" id="usbDriverStatus">Нажми «Проверить USB Wi-Fi».</div>
 <div class="actions"><button class="secondary" id="usbCheck">Проверить USB Wi-Fi</button><button id="usbLoad" disabled>Загрузить драйвер</button></div>
 <pre id="usbInfo">—</pre>
@@ -69,6 +77,12 @@ $('#allowdfs').addEventListener('change',()=>updateChannels());
 $('#applycountry').addEventListener('change',()=>updateChannels());
 $('#country').addEventListener('input',()=>updateChannels());
 $('#lan').addEventListener('change',()=>loadChannelCapabilities($('#lan').value));
+async function loadUserspaceUsb(){
+ const d=await api('usb-wifi/userspace');
+ $('#usbUserspaceStatus').textContent=d.message;
+ $('#usbUserspaceInfo').textContent=JSON.stringify(d,null,2);
+ return d;
+}
 async function loadUsbWifi(){
  const d=await api('usb-wifi');
  $('#usbDriverStatus').textContent=d.message;
@@ -90,6 +104,7 @@ handler('#stop',async()=>{await api('stop','POST');toast('Шлюз остано�
 handler('#refresh',refresh);
 handler('#reset',async()=>{if(!confirm('Удалить только правила Ruslan Xray Gateway?'))return;await api('reset','POST');toast('Наши правила удалены');await refresh()});
 handler('#diag',async()=>{let d=await api('diagnostics');$('#diagOut').textContent=JSON.stringify(d,null,2)});
+handler('#usbUserspaceProbe',async()=>{await loadUserspaceUsb()});
 handler('#usbCheck',async()=>{await loadUsbWifi()});
 handler('#usbLoad',async()=>{const d=await api('usb-wifi/load','POST');toast(d.message,d.status!=='ready');await loadUsbWifi();await refresh()});
-refresh();loadSubscription().catch(e=>toast(e.message,true));loadUsbWifi().catch(e=>{$('#usbDriverStatus').textContent=e.message});</script></body></html>
+refresh();loadSubscription().catch(e=>toast(e.message,true));loadUsbWifi().catch(e=>{$('#usbDriverStatus').textContent=e.message});loadUserspaceUsb().catch(e=>{$('#usbUserspaceStatus').textContent=e.message});</script></body></html>
