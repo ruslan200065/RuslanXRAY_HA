@@ -4,6 +4,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.exceptions import HTTPException
 import engine
 import network
+import subscriptions
 app=Flask(__name__,static_folder=None)
 app.config['MAX_CONTENT_LENGTH']=2*1024*1024
 LOCK=threading.RLock()
@@ -60,6 +61,28 @@ def upload_profile():
     tmp=engine.PROFILE.with_suffix('.tmp');tmp.write_text(json.dumps(cfg,ensure_ascii=False,indent=2));os.chmod(tmp,0o600);tmp.replace(engine.PROFILE)
     LAST_ERROR=''
     return jsonify({'ok':True,'outbounds':len(cfg['outbounds'])})
+
+@app.get('/api/subscription')
+def subscription_info():
+    return jsonify(subscriptions.list_catalog())
+
+@app.post('/api/subscription')
+def subscription_save():
+    if process and process.poll() is None:return reply_error('Сначала остановите шлюз')
+    with LOCK:
+        return jsonify(subscriptions.save_config(request.get_json(force=True)))
+
+@app.post('/api/subscription/refresh')
+def subscription_refresh():
+    if process and process.poll() is None:return reply_error('Сначала остановите шлюз')
+    with LOCK:
+        return jsonify(subscriptions.update_catalog())
+
+@app.post('/api/subscription/select')
+def subscription_select():
+    if process and process.poll() is None:return reply_error('Сначала остановите шлюз')
+    with LOCK:
+        return jsonify(subscriptions.select_profile(request.get_json(force=True).get('id')))
 
 @app.get('/api/preview')
 def preview():
