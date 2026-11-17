@@ -1,5 +1,5 @@
 """An intentionally conservative, reversible IPv4 Xray TProxy adapter."""
-import copy, ipaddress, json, os, re, subprocess
+import copy, ipaddress, json, os, re, subprocess, tempfile
 import network
 from pathlib import Path
 DATA = Path(os.environ.get("GATEWAY_DATA", "/data/ruslan-gateway"))
@@ -106,8 +106,11 @@ def build_profile(raw, port, route_mode="force", target=""):
 
 def verify_profile(cfg):
     DATA.mkdir(parents=True,exist_ok=True)
-    temp=DATA/'verify.json'; temp.write_text(json.dumps(cfg,ensure_ascii=False));os.chmod(temp,0o600)
+    fd, path = tempfile.mkstemp(prefix='verify-', suffix='.json', dir=DATA)
+    temp = Path(path)
     try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            json.dump(cfg, stream, ensure_ascii=False)
         result=run(['/usr/local/bin/xray','run','-test','-c',str(temp)],check=False)
         if result.returncode:raise ValueError((result.stderr or result.stdout or 'Ошибка Xray')[-2500:])
     finally:temp.unlink(missing_ok=True)

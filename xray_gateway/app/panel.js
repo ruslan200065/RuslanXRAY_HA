@@ -15,6 +15,7 @@ let state;
 let catalog;
 let busy = false;
 let pinging = false;
+let refreshing = false;
 let results = new Map();
 let radioRequest = 0;
 let capabilities;
@@ -80,7 +81,8 @@ function renderGateway() {
   $('#network-open').disabled = unavailable || !!state.needs_stop;
   $('#import-open').disabled = unavailable || !catalog || !!state.needs_stop;
   $('#catalog-refresh').hidden = !catalog?.configured;
-  $('#catalog-refresh').disabled = unavailable || !!state.needs_stop;
+  $('#catalog-refresh').disabled = unavailable || refreshing || !!state.needs_stop;
+  $('#catalog-refresh').textContent = refreshing ? 'Обновляется…' : 'Обновить';
 }
 
 function actionButton(label, onClick, disabled = false) {
@@ -185,7 +187,7 @@ async function pingProfile(row) {
   measurements.set(row.id, { label: 'Проверка…', type: 'pending', detail: 'Запрос HTTPS через профиль' });
   renderProfiles();
   try {
-    const result = await api('ping', row.id === null ? {} : { id: row.id });
+    const result = await api('ping', row.id === null ? {} : { id: row.id, revision: row.revision });
     measurements.set(row.id, { label: result.milliseconds + ' мс', type: 'ping-ok', detail: 'До ответа HTTPS через профиль' });
     showNotice(row.name + ' · ' + result.milliseconds + ' мс');
   } catch (error) {
@@ -199,7 +201,7 @@ async function pingProfile(row) {
 
 function selectProfile(row) {
   perform(async () => {
-    await api('subscription/select', { id: row.id });
+    await api('subscription/select', { id: row.id, revision: row.revision });
     await refreshStatus();
     await refreshCatalog();
   });
@@ -215,16 +217,38 @@ $('#power').onclick = () => perform(async () => {
   }
 });
 
-$('#catalog-refresh').onclick = () => perform(async () => {
-  $('#catalog-refresh').textContent = 'Загрузка…';
+async function watchRefresh() {
+  if (refreshing) return;
+  refreshing = true;
+  renderGateway();
   try {
-    await api('subscription/refresh', {});
-    results = new Map();
-    await refreshCatalog();
-    showNotice('Подписка обновлена');
+    while (true) {
+      const result = await api('subscription/refresh');
+      if (result.state === 'error') throw new Error(result.error);
+      if (result.state === 'done') {
+        results = new Map();
+        await refreshCatalog();
+        await refreshStatus();
+        const details = ['Загружено: ' + result.count];
+        if (result.skipped) details.push('пропущено: ' + result.skipped);
+        if (result.selection_lost) details.push('предыдущий профиль сохранён отдельно');
+        showNotice(details.join(' · '));
+        break;
+      }
+      if (result.state !== 'running') break;
+      await new Promise(resolve => setTimeout(resolve, 1200));
+    }
+  } catch (error) {
+    showNotice(error.message, true);
   } finally {
-    $('#catalog-refresh').textContent = 'Обновить';
+    refreshing = false;
+    renderGateway();
   }
+}
+
+$('#catalog-refresh').onclick = () => perform(async () => {
+  await api('subscription/refresh', {});
+  watchRefresh();
 });
 
 function populateInterfaces(name, items, wanted) {
@@ -372,10 +396,8 @@ subscription.onsubmit = event => {
       subscription.elements.url.value = '';
     }
     await api('subscription/refresh', {});
-    results = new Map();
-    await refreshCatalog();
     importDialog.close();
-    showNotice('Профили загружены');
+    watchRefresh();
   }, subscription);
 };
 $('#profile-file').onchange = async event => {
@@ -410,7 +432,9 @@ for (const dialog of [networkDialog, importDialog]) {
   dialog.addEventListener('cancel', event => { if (busy) event.preventDefault() });
 }
 
-Promise.all([refreshStatus(), refreshCatalog()]).catch(error => showNotice(error.message, true));
+Promise.all([refreshStatus(), refreshCatalog()]).then(async () => {
+  if ((await api('subscription/refresh')).state === 'running') watchRefresh();
+}).catch(error => showNotice(error.message, true));
 setInterval(() => {
   if (busy || document.hidden) return;
   refreshStatus().then(() => {
