@@ -123,5 +123,28 @@ class DescriptorTest(unittest.TestCase):
         with self.assertRaises(IOError):
             transport.read_sys_pw_ctrl()
 
+
+    def test_decode_power_flags_from_real_device(self):
+        flags=usbuserspace.decode_power_flags(0x50030082)
+        self.assertTrue(flags['sys_power_ready'])
+        self.assertTrue(flags['wlan_power_enabled'])
+        self.assertTrue(flags['power_swr_enabled'])
+        self.assertFalse(flags['mac_on_requested'])
+        self.assertFalse(flags['mac_off_requested'])
+        self.assertFalse(flags['wlan_suspend_enabled'])
+
+    def test_fixed_allowlisted_snapshot_registers(self):
+        self.assertEqual(set(usbuserspace.RTL8851BU_SNAPSHOT_REGISTERS),
+                         {0x0004,0x0008,0x1060,0x1068,0x1078})
+        device=MagicMock(idVendor=0x0bda,idProduct=0xb851)
+        transport=usbuserspace.RTL8851BUTransport(device)
+        transport.claimed=True
+        device.ctrl_transfer.return_value = b'\x82\x00\x03\x50'
+        value=transport.read_register(0x0004)
+        self.assertEqual(value['value'],'0x50030082')
+        device.ctrl_transfer.assert_called_once_with(0xc0,0x05,0x0004,0,4,timeout=500)
+        with self.assertRaises(ValueError):
+            transport.read_register(0x8400)
+
 if __name__ == '__main__':
     unittest.main()
