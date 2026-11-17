@@ -102,6 +102,7 @@ class ClientServices:
     def __init__(self):
         self.daemons=[]
         self.owned_ip=None
+        self.owned_link=None
 
     def start(self, cfg, interfaces):
         mode,dev,addr=validate_client_settings(cfg,interfaces)
@@ -112,6 +113,18 @@ class ClientServices:
         RUNTIME.mkdir(parents=True,exist_ok=True)
         os.chmod(RUNTIME,0o700)
         try:
+            # A Wi-Fi adapter can be administratively DOWN in HAOS. Bring up only
+            # the selected, dedicated client radio and restore its original state.
+            if mode == 'wifi_ap':
+                link = json.loads(run(['ip', '-j', 'link', 'show', 'dev', dev]).stdout)[0]
+                if 'UP' not in link.get('flags', []):
+                    try:
+                        run(['ip', 'link', 'set', 'dev', dev, 'up'])
+                    except subprocess.CalledProcessError as exc:
+                        raise ValueError('Не удалось включить Wi-Fi '+dev+
+                            ': '+(exc.stderr or str(exc))+
+                            '. Проверьте rfkill, драйвер и NetworkManager.')
+                    self.owned_link=dev
             if not any(addr == ipaddress.ip_interface(x) for x in next(i for i in interfaces if i['name']==dev)['addresses']):
                 run(['ip','-4','address','add',str(addr),'dev',dev])
                 self.owned_ip=(str(addr),dev)
@@ -151,3 +164,6 @@ class ClientServices:
             cidr,dev=self.owned_ip
             run(['ip','-4','address','del',cidr,'dev',dev],check=False)
             self.owned_ip=None
+        if self.owned_link:
+            run(['ip','link','set','dev',self.owned_link,'down'],check=False)
+            self.owned_link=None
