@@ -146,5 +146,29 @@ class DescriptorTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             transport.read_register(0x8400)
 
+
+    def test_rtw89_write32_encoding_only_with_claim(self):
+        device=MagicMock(idVendor=0x0bda,idProduct=0xb851)
+        device.ctrl_transfer.return_value=4
+        transport=usbuserspace.RTL8851BUTransport(device)
+        with self.assertRaises(RuntimeError):
+            transport.write_register32(0x0004, 0x50030082)
+        device.ctrl_transfer.assert_not_called()
+        transport.claimed=True
+        count=transport.write_register32(0x1078, 0x12345678)
+        self.assertEqual(count,4)
+        device.ctrl_transfer.assert_called_once_with(
+            0x40, 0x05, 0x1078, 0, b'\x78\x56\x34\x12', timeout=500)
+
+    def test_rtw89_write32_validates_range(self):
+        device=MagicMock(idVendor=0x0bda,idProduct=0xb851)
+        transport=usbuserspace.RTL8851BUTransport(device)
+        transport.claimed=True
+        with self.assertRaises(ValueError):
+            transport.write_register32(0x1000000, 0)
+        with self.assertRaises(ValueError):
+            transport.write_register32(0x0004, 0x100000000)
+        device.ctrl_transfer.assert_not_called()
+
 if __name__ == '__main__':
     unittest.main()
