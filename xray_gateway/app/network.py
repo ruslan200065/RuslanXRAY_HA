@@ -112,7 +112,7 @@ def radio_capabilities(dev):
     channels = parse_phy_channels(phy.stdout)
     regulatory = run(['iw', 'reg', 'get'], check=False)
     regulatory_output = regulatory.stdout
-    country_entries = re.findall(r'(?m)^\\s*country\\s+([A-Za-z0-9]{2}):', regulatory_output)
+    country_entries = re.findall(r'(?m)^\s*country\s+([A-Za-z0-9]{2}):', regulatory_output)
     return {'device': dev, 'phy': 'phy'+match.group(1), 'supports_ap': supports_ap,
             'channels': channels, 'reg_domain': regulatory_output[:16000],
             'reg_countries': country_entries,
