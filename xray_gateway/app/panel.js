@@ -58,9 +58,14 @@ function renderGateway() {
   const power = $('#power');
   const unavailable = !state || busy;
   const profile = currentProfile();
-  status.dataset.state = state?.running ? 'running' : state?.needs_stop ? 'failed' : 'off';
-  status.textContent = state?.running ? 'Шлюз запущен' : state?.needs_stop
-    ? 'Шлюз требует остановки' : state ? 'Шлюз выключен' : 'Подключение к панели…';
+  const phase = state?.running ? 'running' : state?.starting ? 'starting' : state?.needs_stop ? 'failed' : 'off';
+  status.dataset.state = phase;
+  status.textContent = {
+    running: 'Шлюз запущен',
+    starting: state?.wifi_status || 'Точка доступа запускается…',
+    failed: 'Шлюз требует остановки',
+    off: state ? 'Шлюз выключен' : 'Подключение к панели…'
+  }[phase];
   $('#connection-info').textContent = [
     profile?.name || (state?.profile_present ? 'Сохранённый профиль' : ''),
     state?.settings.downstream && (state.settings.client_service === 'wifi_ap'
@@ -249,24 +254,39 @@ function updateNetworkMode(preferred = field('downstream').value) {
 function updateChannels(preferred = field('wifi_channel').value) {
   const band = field('wifi_band').value;
   const select = field('wifi_channel');
-  const changeCountry = field('wifi_apply_regdomain').checked && /^[a-z]{2}$/i.test(field('wifi_country').value.trim());
+  const country = field('wifi_country').value.trim().toUpperCase();
+  const changeCountry = field('wifi_apply_regdomain').checked && /^[A-Z]{2}$/.test(country);
   const dfs = changeCountry && field('wifi_allow_dfs').checked;
+  const canRequestCountry = changeCountry && capabilities?.global_country
+    && country !== capabilities.global_country && !capabilities.self_managed;
   select.replaceChildren();
   for (const channel of radios[band]) {
     const frequency = band === '5' ? 5000 + 5 * channel : 2407 + 5 * channel;
-    const known = capabilities?.channels;
-    const actual = known?.find(item => item.channel === channel && Math.abs(item.frequency_mhz - frequency) < 1);
+    const actual = capabilities?.channels.find(item => item.channel === channel && Math.abs(item.frequency_mhz - frequency) < .5);
     const radar = band === '5' && (dfsChannels.has(channel) || actual?.radar);
-    const option = new Option(String(channel) + (radar ? ' · DFS' : ''), String(channel));
-    option.disabled = (radar && !dfs) || (known?.length && !actual)
-      || actual?.disabled || (actual?.no_ir && !changeCountry && !radar) || capabilities?.supports_ap === false;
+    const noIr = actual?.no_ir && !(actual.radar && dfs && !capabilities.self_managed);
+    const reason = capabilities?.supports_ap === false ? 'Режим AP недоступен'
+      : capabilities && !actual ? 'Канал отсутствует'
+      : actual?.disabled ? 'Отключён драйвером'
+      : noIr && !canRequestCountry ? 'no-IR'
+      : radar && !dfs ? 'Требуется DFS' : '';
+    const suffix = reason || (noIr ? 'Проверка после смены региона' : radar ? 'DFS' : '');
+    const option = new Option(String(channel) + (suffix ? ' · ' + suffix : ''), String(channel));
+    option.disabled = Boolean(reason);
     select.add(option);
   }
-  const allowed = [...select.options].filter(option => !option.disabled);
-  select.value = allowed.find(option => option.value === String(preferred))?.value || allowed[0]?.value || '';
+  const options = [...select.options];
+  const allowed = options.filter(option => !option.disabled);
+  select.value = options.find(option => option.value === String(preferred))?.value || allowed[0]?.value || '';
+  const chosen = select.selectedOptions[0];
+  const noIr = options.some(option => option.disabled && option.textContent.includes('no-IR'));
   $('#channel-hint').textContent = capabilities?.supports_ap === false
     ? 'Адаптер не поддерживает режим точки доступа.'
-    : allowed.length ? '' : 'Для этого диапазона нет доступных каналов.';
+    : !allowed.length && band === '5'
+      ? (noIr ? 'На 5 ГГц драйвер запрещает начать передачу (no-IR). Выберите 2,4 ГГц или внешнюю точку доступа.'
+              : 'Нет доступных каналов 5 ГГц. Выберите 2,4 ГГц или внешнюю точку доступа.')
+      : chosen?.disabled ? 'Выбранный канал недоступен. Выберите разрешённый канал.'
+      : '';
 }
 
 async function loadRadio(preferred) {
@@ -316,7 +336,7 @@ network.onsubmit = event => {
     const data = Object.fromEntries(new FormData(network));
     data.block_ipv6 = state.settings.block_ipv6;
     data.port = Number(data.port);
-    if (data.client_service === 'wifi_ap' && !data.wifi_channel) {
+    if (data.client_service === 'wifi_ap' && (!data.wifi_channel || field('wifi_channel').selectedOptions[0]?.disabled)) {
       throw new Error('Выберите доступный канал Wi-Fi');
     }
     data.wifi_channel = Number(data.wifi_channel) || state.settings.wifi_channel;

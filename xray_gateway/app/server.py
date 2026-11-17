@@ -75,11 +75,16 @@ def status():
     settings = engine.settings().copy()
     settings['wifi_password_saved'] = bool(settings.pop('wifi_password'))
     rules = engine.rules_present()
-    active = xray_running() and rules and services.alive()
+    healthy = xray_running() and rules and services.alive()
+    ap = services.ap_health() if gateway_started() else None
+    active = healthy and (ap is None or ap['phase'] == 'ready')
+    starting = healthy and ap is not None and ap['phase'] == 'starting'
     return jsonify({'interfaces':engine.interfaces(),'settings':settings,
        'profile_present':engine.PROFILE.is_file(), 'running':active,
        'needs_stop':gateway_started() or rules, 'rules_present':rules,
-       'error':LAST_ERROR})
+       'starting': starting,
+       'wifi_status': ap.get('message', '') if ap else '',
+       'error': LAST_ERROR or (ap['message'] if ap and ap['phase'] == 'failed' else '')})
 
 @app.post('/api/settings')
 @serialized

@@ -50,6 +50,7 @@ p { line-height: 1.5; margin: 7px 0; overflow-wrap: anywhere; }
 .status { display: flex; align-items: center; gap: 9px; font-weight: 650; }
 .status::before { content: ""; border-radius: 50%; width: 8px; height: 8px; background: #99aac0; flex: none; }
 .status[data-state="running"]::before { background: var(--mint); box-shadow: 0 0 0 4px #a8f0d726; }
+.status[data-state="starting"]::before { background: #ffc872; }
 .status[data-state="failed"]::before { background: var(--error); }
 .muted { color: var(--text-muted); }
 .power { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 54px; border-radius: 14px; padding: 10px 16px; }
