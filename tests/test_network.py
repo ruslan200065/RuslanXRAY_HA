@@ -24,14 +24,14 @@ class NetworkTest(unittest.TestCase):
         self.assertEqual(network.validate_client_settings(v,DEVICES)[0],'wifi_ap')
         self.assertIn('ssid2=54657374',network.hostapd_config(v))
     def test_phy_fractional_frequency_parser(self):
-        output = 'Band 2:\\n\\tFrequencies:\\n\\t* 5180.0 MHz [36] (23.0 dBm)\\n\\t* 5200 MHz [40] (no IR)\\n'
+        output = 'Band 2:\n\tFrequencies:\n\t* 5180.0 MHz [36] (23.0 dBm)\n\t* 5200 MHz [40] (no IR)\n'
         parsed=network.parse_phy_channels(output)
         self.assertEqual(parsed[0]['frequency_mhz'],5180.0)
         self.assertEqual(parsed[0]['channel'],36)
         self.assertFalse(parsed[0]['no_ir'])
         self.assertTrue(parsed[1]['no_ir'])
     def test_phy_disabled_and_dfs_flags(self):
-        parsed=network.parse_phy_channels(' * 2412 MHz [1] (disabled)\\n * 5260 MHz [52] (radar detection)\\n')
+        parsed=network.parse_phy_channels(' * 2412 MHz [1] (disabled)\n * 5260 MHz [52] (radar detection)\n')
         self.assertTrue(parsed[0]['disabled'])
         self.assertTrue(parsed[1]['radar'])
     def test_5ghz_ap_configuration(self):

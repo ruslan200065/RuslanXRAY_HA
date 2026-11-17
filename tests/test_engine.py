@@ -1,4 +1,4 @@
-import importlib.util,sys,unittest
+import subprocess,sys,unittest
 from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).parents[1]/'xray_gateway'/'app'))
@@ -26,4 +26,15 @@ class EngineTest(unittest.TestCase):
             with self.assertRaises(ValueError):engine.validate_settings({'upstream':'eth1','downstream':'eth0','port':12345})
     def test_reject_invalid_profile(self):
         with self.assertRaises(ValueError):engine.build_profile({'inbounds':[]},12345)
+
+    def test_failed_route_add_leaves_existing_routes_untouched(self):
+        success = subprocess.CompletedProcess([], 0)
+        missing_table = subprocess.CompletedProcess([], 1)
+        collision = subprocess.CalledProcessError(2, ['ip', 'route', 'add'])
+        with patch.object(engine, 'validate_settings', return_value=('eth0', 'eth1', 12345)):
+            with patch.object(engine, 'run', side_effect=[success, missing_table, collision]) as run:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    engine.apply_rules({})
+        self.assertEqual(run.call_count, 3)
+
 if __name__=='__main__':unittest.main()
