@@ -224,6 +224,29 @@ class RTL8851BUTransport:
         if not self.claimed:
             raise RuntimeError('WLAN USB interface is not claimed')
 
+
+    def read_sys_pw_ctrl(self, timeout=500):
+        """Read RTL8851B power register using upstream rtw89 USB vendor protocol.
+
+        This performs only one READ of address 0x0004, never vendor WRITE.
+        """
+        self._require_open()
+        address = 0x0004
+        raw = self.device.ctrl_transfer(0xC0, 0x05,
+                                        address & 0xffff,
+                                        (address >> 16) & 0xff,
+                                        4, timeout=timeout)
+        data = bytes(raw)
+        if len(data) != 4:
+            raise IOError('Expected 4 bytes, got ' + str(len(data)))
+        return {
+            'register': 'R_AX_SYS_PW_CTRL',
+            'address': '0x0004',
+            'value': '0x%08x' % int.from_bytes(data, 'little'),
+            'raw_le': data.hex(),
+            'operation': 'vendor control read 0xc0/0x05',
+        }
+
     def bulk_read(self, endpoint, length, timeout=1000):
         self._require_open()
         if not (0x80 <= endpoint <= 0x8F):
