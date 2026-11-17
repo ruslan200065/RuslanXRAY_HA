@@ -167,6 +167,12 @@ def usb_userspace_read_power():
     with LOCK:
         return jsonify(usbuserspace.read_chip_power_register())
 
+@app.post('/api/usb-wifi/userspace/snapshot')
+def usb_userspace_register_snapshot():
+    # Fixed allowlist of read-only chip registers; no client-supplied address.
+    with LOCK:
+        return jsonify(usbuserspace.snapshot_chip_registers())
+
 @app.get('/api/usb-wifi')
 def usb_wifi_status():
     return jsonify(usbwifi.state())
