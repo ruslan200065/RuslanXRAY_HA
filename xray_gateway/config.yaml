@@ -1,7 +1,7 @@
 name: "Ruslan Xray Gateway (Experimental)"
 slug: "ruslan_xray_gateway"
 description: "Universal Xray TProxy gateway with Remnawave subscriptions, Ethernet DHCP and experimental Wi-Fi AP"
-version: "0.3.8"
+version: "0.3.9"
 url: "https://github.com/ruslan200065/RuslanXRAY_HA"
 arch:
   - amd64
@@ -10,6 +10,8 @@ startup: services
 boot: manual
 init: false
 host_network: true
+# Direct libusb access to USB device nodes; kernel Wi-Fi driver not required for probing.
+usb: true
 # Mount host modules read-only and grant SYS_MODULE for opt-in USB Wi-Fi driver loading.
 kernel_modules: true
 privileged:
