@@ -12,8 +12,6 @@ init: false
 host_network: true
 # Direct libusb access to USB device nodes; kernel Wi-Fi driver not required for probing.
 usb: true
-# Mount host modules read-only and grant SYS_MODULE for opt-in USB Wi-Fi driver loading.
-kernel_modules: true
 privileged:
   - NET_ADMIN
   - NET_RAW
