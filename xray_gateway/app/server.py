@@ -154,6 +154,13 @@ def reset():
 def usb_userspace_status():
     return jsonify(usbuserspace.probe())
 
+@app.post('/api/usb-wifi/userspace/claim-test')
+def usb_userspace_claim_test():
+    # Explicit action: claims and releases only one validated vendor WLAN USB
+    # interface. Never sends firmware commands or detaches a host driver.
+    with LOCK:
+        return jsonify(usbuserspace.claim_test())
+
 @app.get('/api/usb-wifi')
 def usb_wifi_status():
     return jsonify(usbwifi.state())
