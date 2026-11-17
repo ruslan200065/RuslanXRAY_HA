@@ -258,3 +258,47 @@ class RTL8851BUTransport:
         if not (0x01 <= endpoint <= 0x0F):
             raise ValueError('Not a USB OUT endpoint')
         return self.device.write(endpoint, payload, timeout=timeout)
+
+
+def read_chip_power_register():
+    """Optional USB control register read, claiming only WLAN interface 2.
+
+    No reset, no firmware upload, no vendor writes, no radio TX.
+    """
+    try:
+        import usb.core
+        import usb.util
+        from usb.backend import libusb1
+    except ImportError as exc:
+        raise ValueError('PyUSB/libusb unavailable: ' + str(exc))
+    backend = libusb1.get_backend()
+    if backend is None:
+        raise ValueError('libusb backend unavailable')
+    devices = list(usb.core.find(find_all=True, idVendor=VID,
+                                 idProduct=PID, backend=backend) or [])
+    if len(devices) != 1:
+        raise ValueError('Expected one RTL8851BU, found ' + str(len(devices)))
+    device = devices[0]
+    report = descriptor_report(device)
+    matches = [x for x in wlan_candidates(report) if x['valid_rtw89_topology']]
+    if len(matches) != 1 or matches[0]['interface_number'] != 2:
+        raise ValueError('WLAN interface 2 topology mismatch')
+    transport = RTL8851BUTransport(device)
+    try:
+        transport.open_wlan(2)
+        register = transport.read_sys_pw_ctrl()
+        return {
+            'status': 'register_read_success',
+            'stage': 'rtl8851bu_vendor_read',
+            'usb_id': '0bda:b851',
+            'interface_number': 2,
+            'register': register,
+            'ap_ready': False,
+            'message': ('RTL8851BU answered a read-only power register request. '
+                        'No firmware or AP initialization was attempted.'),
+        }
+    except (OSError, ValueError, RuntimeError, usb.core.USBError) as exc:
+        raise ValueError('RTL8851BU register read failed: ' + str(exc))
+    finally:
+        transport.close()
+        usb.util.dispose_resources(device)
