@@ -82,16 +82,28 @@ def validate_client_settings(cfg, interfaces, current_routes=None):
 
 
 def verify_ap_radio(dev, band, channel):
-    """Fail clearly if selected radio/PHY cannot operate as an AP on this channel."""
+    """Check PHY AP support and the selected 2.4/5 GHz channel."""
     info = run(['iw', 'dev', dev, 'info'], check=False)
-    match = re.search(r'\\bwiphy\\s+(\\d+)', info.stdout)
+    match = re.search(r'\bwiphy\s+(\d+)', info.stdout)
     if info.returncode != 0 or not match:
         raise ValueError('Не удалось определить Wi-Fi PHY для '+dev+': '+info.stderr[-300:])
     phy = run(['iw', 'phy', 'phy'+match.group(1), 'info'], check=False)
     if phy.returncode != 0:
         raise ValueError('Не удалось получить возможности Wi-Fi адаптера: '+phy.stderr[-300:])
-    if re.search(r'^\\s*\\* AP\\s*
-    """2.4 / 5 GHz WPA2 CCMP; restrict 5 GHz to non-DFS channels."""
+    if re.search(r'^\s*\* AP\s*$', phy.stdout, flags=re.M) is None:
+        raise ValueError('Wi-Fi адаптер не поддерживает режим точки доступа (AP)')
+    freq = 5000 + 5 * channel if band == '5' else 2407 + 5 * channel
+    pattern = rf'\b{freq}\s+MHz\s+\[{channel}\]'
+    entries = [line.lower() for line in phy.stdout.splitlines() if re.search(pattern, line, flags=re.I)]
+    if not entries:
+        raise ValueError(f'Адаптер не поддерживает канал {channel} диапазона {band} ГГц')
+    if any(('disabled' in line or 'no ir' in line or 'no-ir' in line) for line in entries):
+        raise ValueError(f'Канал {channel} запрещён для AP настройками Wi-Fi региона/драйвера')
+    return True
+
+
+def hostapd_config(cfg):
+    """2.4 / 5 GHz WPA2 CCMP; 5 GHz limited to non-DFS channels."""
     dev=cfg['downstream']
     ssid=cfg['wifi_ssid']
     password=cfg['wifi_password']
@@ -100,7 +112,6 @@ def verify_ap_radio(dev, band, channel):
     if band not in WIFI_CHANNELS or channel not in WIFI_CHANNELS[band]:
         raise ValueError('Некорректный диапазон или канал Wi-Fi')
     hw_mode='a' if band == '5' else 'g'
-    # hex SSID supports UTF-8 and avoids newline/escape injection
     return (f'interface={dev}\ndriver=nl80211\nssid2={ssid.encode().hex()}\n'
             f'hw_mode={hw_mode}\nchannel={channel}\nwmm_enabled=1\n'
             f'auth_algs=1\nwpa=2\nwpa_passphrase={password}\nwpa_key_mgmt=WPA-PSK\n'
@@ -137,212 +148,6 @@ class ClientServices:
             # the selected, dedicated client radio and restore its original state.
             if mode == 'wifi_ap':
                 verify_ap_radio(dev, str(cfg.get('wifi_band','2.4')), int(cfg.get('wifi_channel',6)))
-                link = json.loads(run(['ip', '-j', 'link', 'show', 'dev', dev]).stdout)[0]
-                if 'UP' not in link.get('flags', []):
-                    try:
-                        run(['ip', 'link', 'set', 'dev', dev, 'up'])
-                    except subprocess.CalledProcessError as exc:
-                        raise ValueError('Не удалось включить Wi-Fi '+dev+
-                            ': '+(exc.stderr or str(exc))+
-                            '. Проверьте rfkill, драйвер и NetworkManager.')
-                    self.owned_link=dev
-            if not any(addr == ipaddress.ip_interface(x) for x in next(i for i in interfaces if i['name']==dev)['addresses']):
-                run(['ip','-4','address','add',str(addr),'dev',dev])
-                self.owned_ip=(str(addr),dev)
-            if mode == 'wifi_ap':
-                (RUNTIME/'hostapd.conf').write_text(hostapd_config(cfg))
-                os.chmod(RUNTIME/'hostapd.conf',0o600)
-                self._launch(['hostapd',str(RUNTIME/'hostapd.conf')], 'hostapd')
-            (RUNTIME/'dnsmasq.conf').write_text(dnsmasq_config(cfg))
-            self._launch(['dnsmasq','--keep-in-foreground','--conf-file='+str(RUNTIME/'dnsmasq.conf'),
-                         '--pid-file='+str(RUNTIME/'dnsmasq.pid')], 'dnsmasq')
-        except Exception:
-            self.stop()
-            raise
-
-    def _launch(self,cmd,label):
-        log=open(RUNTIME/(label+'.log'),'ab')
-        try:
-            p=subprocess.Popen(cmd,stdout=log,stderr=subprocess.STDOUT)
-        finally:
-            log.close()
-        self.daemons.append((label,p))
-        time.sleep(.35)
-        if p.poll() is not None:
-            raise ValueError(label+' не запустился: '+(RUNTIME/(label+'.log')).read_text(errors='replace')[-1200:])
-
-    def alive(self):
-        return all(p.poll() is None for _,p in self.daemons)
-
-    def stop(self):
-        for _,p in reversed(self.daemons):
-            if p.poll() is None:
-                p.terminate()
-                try:p.wait(timeout=3)
-                except subprocess.TimeoutExpired:p.kill();p.wait()
-        self.daemons.clear()
-        if self.owned_ip:
-            cidr,dev=self.owned_ip
-            run(['ip','-4','address','del',cidr,'dev',dev],check=False)
-            self.owned_ip=None
-        if self.owned_link:
-            run(['ip','link','set','dev',self.owned_link,'down'],check=False)
-            self.owned_link=None
-, phy.stdout, flags=re.M) is None:
-        raise ValueError('Wi-Fi адаптер не поддерживает режим точки доступа (AP)')
-    freq = 5000 + 5*channel if band == '5' else 2407 + 5*channel
-    pattern = rf'^.*?\\[\\s*{channel}\\s*\\].*
-    """2.4 / 5 GHz WPA2 CCMP; restrict 5 GHz to non-DFS channels."""
-    dev=cfg['downstream']
-    ssid=cfg['wifi_ssid']
-    password=cfg['wifi_password']
-    channel=int(cfg.get('wifi_channel',6))
-    band=str(cfg.get('wifi_band','2.4'))
-    if band not in WIFI_CHANNELS or channel not in WIFI_CHANNELS[band]:
-        raise ValueError('Некорректный диапазон или канал Wi-Fi')
-    hw_mode='a' if band == '5' else 'g'
-    # hex SSID supports UTF-8 and avoids newline/escape injection
-    return (f'interface={dev}\ndriver=nl80211\nssid2={ssid.encode().hex()}\n'
-            f'hw_mode={hw_mode}\nchannel={channel}\nwmm_enabled=1\n'
-            f'auth_algs=1\nwpa=2\nwpa_passphrase={password}\nwpa_key_mgmt=WPA-PSK\n'
-            f'rsn_pairwise=CCMP\n')
-
-
-def dnsmasq_config(cfg):
-    # DNS supplied via DHCP only; never binds host port 53.
-    gw=ipaddress.ip_interface(cfg['gateway_cidr']).ip
-    mask=ipaddress.ip_interface(cfg['gateway_cidr']).network.netmask
-    return (f'interface={cfg["downstream"]}\nbind-interfaces\n'
-            'port=0\ndhcp-authoritative\n'
-            f'dhcp-range={cfg["dhcp_start"]},{cfg["dhcp_end"]},{mask},12h\n'
-            f'dhcp-option=option:router,{gw}\ndhcp-option=option:dns-server,1.1.1.1,9.9.9.9\n'
-            'log-dhcp\n')
-
-
-class ClientServices:
-    def __init__(self):
-        self.daemons=[]
-        self.owned_ip=None
-        self.owned_link=None
-
-    def start(self, cfg, interfaces):
-        mode,dev,addr=validate_client_settings(cfg,interfaces)
-        if mode == 'manual':
-            if not any(addr == ipaddress.ip_interface(x) for x in next(i for i in interfaces if i['name']==dev)['addresses']):
-                raise ValueError('В ручном режиме назначьте IP шлюза в HAOS')
-            return
-        RUNTIME.mkdir(parents=True,exist_ok=True)
-        os.chmod(RUNTIME,0o700)
-        try:
-            # A Wi-Fi adapter can be administratively DOWN in HAOS. Bring up only
-            # the selected, dedicated client radio and restore its original state.
-            if mode == 'wifi_ap':
-                link = json.loads(run(['ip', '-j', 'link', 'show', 'dev', dev]).stdout)[0]
-                if 'UP' not in link.get('flags', []):
-                    try:
-                        run(['ip', 'link', 'set', 'dev', dev, 'up'])
-                    except subprocess.CalledProcessError as exc:
-                        raise ValueError('Не удалось включить Wi-Fi '+dev+
-                            ': '+(exc.stderr or str(exc))+
-                            '. Проверьте rfkill, драйвер и NetworkManager.')
-                    self.owned_link=dev
-            if not any(addr == ipaddress.ip_interface(x) for x in next(i for i in interfaces if i['name']==dev)['addresses']):
-                run(['ip','-4','address','add',str(addr),'dev',dev])
-                self.owned_ip=(str(addr),dev)
-            if mode == 'wifi_ap':
-                (RUNTIME/'hostapd.conf').write_text(hostapd_config(cfg))
-                os.chmod(RUNTIME/'hostapd.conf',0o600)
-                self._launch(['hostapd',str(RUNTIME/'hostapd.conf')], 'hostapd')
-            (RUNTIME/'dnsmasq.conf').write_text(dnsmasq_config(cfg))
-            self._launch(['dnsmasq','--keep-in-foreground','--conf-file='+str(RUNTIME/'dnsmasq.conf'),
-                         '--pid-file='+str(RUNTIME/'dnsmasq.pid')], 'dnsmasq')
-        except Exception:
-            self.stop()
-            raise
-
-    def _launch(self,cmd,label):
-        log=open(RUNTIME/(label+'.log'),'ab')
-        try:
-            p=subprocess.Popen(cmd,stdout=log,stderr=subprocess.STDOUT)
-        finally:
-            log.close()
-        self.daemons.append((label,p))
-        time.sleep(.35)
-        if p.poll() is not None:
-            raise ValueError(label+' не запустился: '+(RUNTIME/(label+'.log')).read_text(errors='replace')[-1200:])
-
-    def alive(self):
-        return all(p.poll() is None for _,p in self.daemons)
-
-    def stop(self):
-        for _,p in reversed(self.daemons):
-            if p.poll() is None:
-                p.terminate()
-                try:p.wait(timeout=3)
-                except subprocess.TimeoutExpired:p.kill();p.wait()
-        self.daemons.clear()
-        if self.owned_ip:
-            cidr,dev=self.owned_ip
-            run(['ip','-4','address','del',cidr,'dev',dev],check=False)
-            self.owned_ip=None
-        if self.owned_link:
-            run(['ip','link','set','dev',self.owned_link,'down'],check=False)
-            self.owned_link=None
-
-    entries = [line.lower() for line in phy.stdout.splitlines() if re.match(pattern, line) and f'{freq} mhz' in line.lower()]
-    if not entries:
-        raise ValueError(f'Адаптер не поддерживает канал {channel} диапазона {band} ГГц')
-    if any(('[disabled]' in line or '(disabled)' in line or 'no ir' in line or 'no-ir' in line) for line in entries):
-        raise ValueError(f'Канал {channel} запрещён для AP текущим Wi-Fi regulatory domain. Настройте страну в HAOS/драйвере.')
-    return True
-
-
-def hostapd_config(cfg):
-    """2.4 / 5 GHz WPA2 CCMP; restrict 5 GHz to non-DFS channels."""
-    dev=cfg['downstream']
-    ssid=cfg['wifi_ssid']
-    password=cfg['wifi_password']
-    channel=int(cfg.get('wifi_channel',6))
-    band=str(cfg.get('wifi_band','2.4'))
-    if band not in WIFI_CHANNELS or channel not in WIFI_CHANNELS[band]:
-        raise ValueError('Некорректный диапазон или канал Wi-Fi')
-    hw_mode='a' if band == '5' else 'g'
-    # hex SSID supports UTF-8 and avoids newline/escape injection
-    return (f'interface={dev}\ndriver=nl80211\nssid2={ssid.encode().hex()}\n'
-            f'hw_mode={hw_mode}\nchannel={channel}\nwmm_enabled=1\n'
-            f'auth_algs=1\nwpa=2\nwpa_passphrase={password}\nwpa_key_mgmt=WPA-PSK\n'
-            f'rsn_pairwise=CCMP\n')
-
-
-def dnsmasq_config(cfg):
-    # DNS supplied via DHCP only; never binds host port 53.
-    gw=ipaddress.ip_interface(cfg['gateway_cidr']).ip
-    mask=ipaddress.ip_interface(cfg['gateway_cidr']).network.netmask
-    return (f'interface={cfg["downstream"]}\nbind-interfaces\n'
-            'port=0\ndhcp-authoritative\n'
-            f'dhcp-range={cfg["dhcp_start"]},{cfg["dhcp_end"]},{mask},12h\n'
-            f'dhcp-option=option:router,{gw}\ndhcp-option=option:dns-server,1.1.1.1,9.9.9.9\n'
-            'log-dhcp\n')
-
-
-class ClientServices:
-    def __init__(self):
-        self.daemons=[]
-        self.owned_ip=None
-        self.owned_link=None
-
-    def start(self, cfg, interfaces):
-        mode,dev,addr=validate_client_settings(cfg,interfaces)
-        if mode == 'manual':
-            if not any(addr == ipaddress.ip_interface(x) for x in next(i for i in interfaces if i['name']==dev)['addresses']):
-                raise ValueError('В ручном режиме назначьте IP шлюза в HAOS')
-            return
-        RUNTIME.mkdir(parents=True,exist_ok=True)
-        os.chmod(RUNTIME,0o700)
-        try:
-            # A Wi-Fi adapter can be administratively DOWN in HAOS. Bring up only
-            # the selected, dedicated client radio and restore its original state.
-            if mode == 'wifi_ap':
                 link = json.loads(run(['ip', '-j', 'link', 'show', 'dev', dev]).stdout)[0]
                 if 'UP' not in link.get('flags', []):
                     try:
