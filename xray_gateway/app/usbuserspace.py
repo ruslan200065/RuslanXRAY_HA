@@ -292,6 +292,27 @@ class RTL8851BUTransport:
             'value': '0x%08x' % int.from_bytes(data, 'little'),
         }
 
+
+    def write_register32(self, address, value, timeout=500):
+        """Low-level rtw89 USB vendor WRITE primitive for future MAC startup.
+
+        Deliberately NOT exposed via HTTP and never called by diagnostics.
+        Never use without the complete upstream-dependent power sequence.
+        """
+        self._require_open()
+        if not isinstance(address, int) or not 0 <= address <= 0xffffff:
+            raise ValueError('Invalid 24-bit RTL8851B register address')
+        if not isinstance(value, int) or not 0 <= value <= 0xffffffff:
+            raise ValueError('Invalid RTL8851B 32-bit register value')
+        payload = value.to_bytes(4, 'little')
+        count = self.device.ctrl_transfer(
+            0x40, 0x05, address & 0xffff, (address >> 16) & 0xff,
+            payload, timeout=timeout
+        )
+        if count != 4:
+            raise IOError('RTL8851B register WRITE short transfer: ' + str(count))
+        return count
+
     def bulk_read(self, endpoint, length, timeout=1000):
         self._require_open()
         if not (0x80 <= endpoint <= 0x8F):
