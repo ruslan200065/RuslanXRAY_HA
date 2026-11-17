@@ -22,6 +22,12 @@
 <pre id="usbUserspaceInfo">—</pre>
 <div class="note">Диагностика читает дескрипторы без захвата. По отдельной кнопке можно кратковременно захватить и освободить только Wi-Fi-интерфейс №2: никакие Wi-Fi команды, firmware и данные в устройство не отправляются; Bluetooth-интерфейсы №0 и №1 не захватываются. Это всё ещё не готовая точка доступа — предстоит портировать инициализацию RTL8851BU и обмен Wi-Fi кадрами.</div>
 </div>
+<div class="card"><h2>Прошивка RTL8851B · userspace</h2>
+<p class="muted">Файл <code>rtw8851b_fw.bin</code> теперь входит в Docker-образ через официальный пакет linux-firmware-rtw89. Проверяем заголовок, версию и SHA-256. Это подготовка к отправке firmware — чип пока не программируется.</p>
+<div class="actions"><button id="usbFirmwareCheck">Проверить прошивку</button></div>
+<div class="note" id="usbFirmwareStatus">Проверка ещё не выполнена</div>
+<pre id="usbFirmwareInfo">—</pre>
+</div>
 <div class="card"><h2>Альтернативный способ: драйвер ядра</h2>
 <p class="muted">Резервный путь через встроенный модуль HAOS rtw89_8851bu. Для выбранного userspace-пути он не нужен.</p>
 <div class="note" id="usbDriverStatus">Нажми «Проверить USB Wi-Fi».</div>
@@ -77,6 +83,12 @@ $('#allowdfs').addEventListener('change',()=>updateChannels());
 $('#applycountry').addEventListener('change',()=>updateChannels());
 $('#country').addEventListener('input',()=>updateChannels());
 $('#lan').addEventListener('change',()=>loadChannelCapabilities($('#lan').value));
+async function checkUsbFirmware(){
+ const d=await api('usb-wifi/firmware');
+ $('#usbFirmwareStatus').textContent=d.message;
+ $('#usbFirmwareInfo').textContent=JSON.stringify(d,null,2);
+ return d;
+}
 async function loadUserspaceUsb(){
  const d=await api('usb-wifi/userspace');
  $('#usbUserspaceStatus').textContent=d.message;
@@ -108,6 +120,7 @@ handler('#stop',async()=>{await api('stop','POST');toast('Шлюз остано�
 handler('#refresh',refresh);
 handler('#reset',async()=>{if(!confirm('Удалить только правила Ruslan Xray Gateway?'))return;await api('reset','POST');toast('Наши правила удалены');await refresh()});
 handler('#diag',async()=>{let d=await api('diagnostics');$('#diagOut').textContent=JSON.stringify(d,null,2)});
+handler('#usbFirmwareCheck',async()=>{await checkUsbFirmware()});
 handler('#usbUserspaceProbe',async()=>{await loadUserspaceUsb()});
 handler('#usbUserspaceReadPower',async()=>{
  if(!confirm('Прочитать один регистр питания 0x0004 RTL8851BU через libusb? Будет отправлен только USB vendor READ. Прошивка, радио и Bluetooth не изменяются.'))return;
@@ -130,4 +143,4 @@ handler('#usbUserspaceClaim',async()=>{
 });
 handler('#usbCheck',async()=>{await loadUsbWifi()});
 handler('#usbLoad',async()=>{const d=await api('usb-wifi/load','POST');toast(d.message,d.status!=='ready');await loadUsbWifi();await refresh()});
-refresh();loadSubscription().catch(e=>toast(e.message,true));loadUsbWifi().catch(e=>{$('#usbDriverStatus').textContent=e.message});loadUserspaceUsb().catch(e=>{$('#usbUserspaceStatus').textContent=e.message});</script></body></html>
+refresh();loadSubscription().catch(e=>toast(e.message,true));loadUsbWifi().catch(e=>{$('#usbDriverStatus').textContent=e.message});loadUserspaceUsb().catch(e=>{$('#usbUserspaceStatus').textContent=e.message});checkUsbFirmware().catch(e=>{$('#usbFirmwareStatus').textContent=e.message});</script></body></html>
