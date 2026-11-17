@@ -110,8 +110,13 @@ def radio_capabilities(dev):
         raise ValueError('Не удалось прочитать Wi-Fi PHY: '+(phy.stderr or phy.stdout)[-350:])
     supports_ap = bool(re.search(r'^\s*\*\s+AP\s*$', phy.stdout, re.M))
     channels = parse_phy_channels(phy.stdout)
-    return {'device':dev, 'phy':'phy'+match.group(1), 'supports_ap':supports_ap,
-            'channels':channels, 'reg_domain':run(['iw','reg','get'],check=False).stdout[-2000:]}
+    regulatory = run(['iw', 'reg', 'get'], check=False)
+    regulatory_output = regulatory.stdout
+    country_entries = re.findall(r'(?m)^\\s*country\\s+([A-Za-z0-9]{2}):', regulatory_output)
+    return {'device': dev, 'phy': 'phy'+match.group(1), 'supports_ap': supports_ap,
+            'channels': channels, 'reg_domain': regulatory_output[:16000],
+            'reg_countries': country_entries,
+            'reg_error': regulatory.stderr[-500:] if regulatory.returncode else ''}
 
 
 def verify_ap_radio(dev, band, channel):
