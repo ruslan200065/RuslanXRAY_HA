@@ -242,7 +242,8 @@ class ClientServices:
             if mode == 'wifi_ap':
                 if cfg.get('wifi_apply_regdomain', False):
                     self.owned_regdomain=apply_regdomain(cfg.get('wifi_country',''))
-                verify_ap_radio(dev, str(cfg.get('wifi_band','2.4')), int(cfg.get('wifi_channel',6)),\n                                allow_dfs=bool(cfg.get('wifi_allow_dfs', False) and cfg.get('wifi_apply_regdomain', False)))
+                verify_ap_radio(dev, str(cfg.get('wifi_band','2.4')), int(cfg.get('wifi_channel',6)),
+                                allow_dfs=bool(cfg.get('wifi_allow_dfs', False) and cfg.get('wifi_apply_regdomain', False)))
                 link = json.loads(run(['ip', '-j', 'link', 'show', 'dev', dev]).stdout)[0]
                 if 'UP' not in link.get('flags', []):
                     try:
