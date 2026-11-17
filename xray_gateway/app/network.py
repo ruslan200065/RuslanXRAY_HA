@@ -67,7 +67,12 @@ def validate_client_settings(cfg, interfaces, current_routes=None):
         channel = int(cfg.get('wifi_channel', 6))
         if channel not in WIFI_CHANNELS[band]:
             raise ValueError(f'Канал {channel} недопустим для диапазона {band} ГГц')
-        # An adapter being Wi-Fi does not imply that it supports AP mode on 5 GHz.
+        country = str(cfg.get('wifi_country', '')).strip().upper()
+        if country and (not re.fullmatch(r'[A-Z]{2}', country) or country in ('XX', 'ZZ', 'AA')):
+            raise ValueError('Укажите реальный код страны из двух латинских букв: RU, DE, FI и т. п.')
+        if cfg.get('wifi_apply_regdomain', False) and not country:
+            raise ValueError('Укажите страну перед изменением Wi-Fi регуляторного домена')
+        # The channel must still be permitted by the physical driver.
         # Check the selected PHY before starting, not during settings validation.
     if mode in ('dhcp', 'wifi_ap'):
         start = ipaddress.ip_address(cfg.get('dhcp_start', '192.168.50.100'))
@@ -119,6 +124,30 @@ def radio_capabilities(dev):
             'reg_error': regulatory.stderr[-500:] if regulatory.returncode else ''}
 
 
+def global_country(reg_output):
+    """Return only the global country from iw reg get, not a PHY override."""
+    match = re.search(r'(?m)^global\s*\n\s*country\s+([A-Z]{2}|00):', reg_output)
+    return match.group(1) if match else None
+
+
+def apply_regdomain(country):
+    """Temporarily request a real country; hardware regulatory limits still apply."""
+    country = str(country).strip().upper()
+    if not re.fullmatch(r'[A-Z]{2}', country) or country in ('XX', 'ZZ', 'AA'):
+        raise ValueError('Недопустимый ISO-код страны Wi-Fi')
+    current = run(['iw', 'reg', 'get'], check=False)
+    previous = global_country(current.stdout) if current.returncode == 0 else None
+    if previous is None:
+        raise ValueError('Не удалось прочитать исходный глобальный Wi-Fi регион — изменение отменено')
+    if previous == country:
+        return None
+    result = run(['iw', 'reg', 'set', country], check=False)
+    if result.returncode:
+        raise ValueError('Не удалось применить Wi-Fi регион '+country+': '+(result.stderr or result.stdout)[-400:])
+    time.sleep(.5)
+    return (country, previous)
+
+
 def verify_ap_radio(dev, band, channel):
     details = radio_capabilities(dev)
     if not details['supports_ap']:
@@ -131,8 +160,9 @@ def verify_ap_radio(dev, band, channel):
         raise ValueError(f'Канал {channel} ({freq} МГц) отсутствует в iw phy {details["phy"]}. '
                          f'Доступные каналы по драйверу: {found or "нет"}. См. диагностику Wi-Fi')
     if not any(not x['disabled'] and not x['no_ir'] and not x['radar'] for x in entries):
-        raise ValueError(f'Канал {channel} ({freq} МГц) запрещён для запуска AP '
-                         '(disabled/no-IR/DFS). Проверьте регуляторный домен Wi-Fi')
+        flags = ', '.join(k for k in ('disabled', 'no_ir', 'radar') if any(x[k] for x in entries))
+        raise ValueError(f'Канал {channel} ({freq} МГц) запрещён для AP: {flags}. '
+                         'Возможно, драйвер self-managed сохраняет ограничение независимо от выбранной страны.')
     return True
 
 
@@ -146,8 +176,14 @@ def hostapd_config(cfg):
     if band not in WIFI_CHANNELS or channel not in WIFI_CHANNELS[band]:
         raise ValueError('Некорректный диапазон или канал Wi-Fi')
     hw_mode='a' if band == '5' else 'g'
+    country = str(cfg.get('wifi_country', '')).strip().upper()
+    change_country = bool(cfg.get('wifi_apply_regdomain', False))
+    if change_country and (not re.fullmatch(r'[A-Z]{2}',country) or country in ('XX','ZZ','AA')):
+        raise ValueError('Некорректная страна для hostapd')
+    country_lines = f'country_code={country}\nieee80211d=1\n' if change_country else ''
+    ht_lines = 'ieee80211n=1\n' if cfg.get('wifi_11n', True) else ''
     return (f'interface={dev}\ndriver=nl80211\nssid2={ssid.encode().hex()}\n'
-            f'hw_mode={hw_mode}\nchannel={channel}\nwmm_enabled=1\n'
+            f'hw_mode={hw_mode}\nchannel={channel}\nwmm_enabled=1\n{country_lines}{ht_lines}'
             f'auth_algs=1\nwpa=2\nwpa_passphrase={password}\nwpa_key_mgmt=WPA-PSK\n'
             f'rsn_pairwise=CCMP\n')
 
@@ -168,6 +204,7 @@ class ClientServices:
         self.daemons=[]
         self.owned_ip=None
         self.owned_link=None
+        self.owned_regdomain=None
 
     def start(self, cfg, interfaces):
         mode,dev,addr=validate_client_settings(cfg,interfaces)
@@ -181,6 +218,8 @@ class ClientServices:
             # A Wi-Fi adapter can be administratively DOWN in HAOS. Bring up only
             # the selected, dedicated client radio and restore its original state.
             if mode == 'wifi_ap':
+                if cfg.get('wifi_apply_regdomain', False):
+                    self.owned_regdomain=apply_regdomain(cfg.get('wifi_country',''))
                 verify_ap_radio(dev, str(cfg.get('wifi_band','2.4')), int(cfg.get('wifi_channel',6)))
                 link = json.loads(run(['ip', '-j', 'link', 'show', 'dev', dev]).stdout)[0]
                 if 'UP' not in link.get('flags', []):
@@ -233,3 +272,14 @@ class ClientServices:
         if self.owned_link:
             run(['ip','link','set','dev',self.owned_link,'down'],check=False)
             self.owned_link=None
+        if self.owned_regdomain:
+            expected, previous = self.owned_regdomain
+            self.owned_regdomain = None
+            current = run(['iw', 'reg', 'get'], check=False)
+            # Do not overwrite a newer change performed by another administrator.
+            if current.returncode == 0 and global_country(current.stdout) == expected:
+                result = run(['iw', 'reg', 'set', previous], check=False)
+                if result.returncode:
+                    RUNTIME.mkdir(parents=True,exist_ok=True)
+                    (RUNTIME/'regdomain_restore.log').write_text(
+                        'Регион '+previous+' не восстановлен: '+(result.stderr or result.stdout)[-500:])
