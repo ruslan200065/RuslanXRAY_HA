@@ -93,7 +93,7 @@ def preview():
     return jsonify({'nft':engine.nft_rules(d,port,bool(settings['block_ipv6'])),
                     'dhcp': network.dnsmasq_config(settings) if settings['client_service']!='manual' else '',
                     'wifi': network.hostapd_config(settings).replace(settings['wifi_password'],'***') if settings['client_service']=='wifi_ap' else '',
-                    'routes':engine.route_commands(),'note':'Адрес клиентского интерфейса назначается временно. NetworkManager и default route HAOS не изменяются. Для Wi-Fi AP адаптер должен поддерживать AP mode и не использоваться HAOS.'})
+                    'routes':engine.route_commands(),'note':'Адрес клиентского интерфейса назначается временно. NetworkManager и default route HAOS не изменяются. При включённом wifi_apply_regdomain iw reg set изменит глобальный Wi-Fi регион хоста; при остановке будет попытка восстановить предыдущий регион.'})
 
 @app.post('/api/start')
 def start():
@@ -166,7 +166,8 @@ def diagnostics():
        'routes':engine.run(['ip','-4','route','show'],check=False).stdout[-8000:],
        'rules':engine.run(['nft','list','table','inet',engine.NFT_NAME],check=False).stdout[-8000:],
        'service_logs': {n:(network.RUNTIME/(n+'.log')).read_text(errors='replace')[-3000:] if (network.RUNTIME/(n+'.log')).exists() else '' for n in ('hostapd','dnsmasq')},
-       'xray_log':(engine.DATA/'xray.log').read_text(errors='replace')[-4000:] if (engine.DATA/'xray.log').exists() else ''})
+       'xray_log':(engine.DATA/'xray.log').read_text(errors='replace')[-4000:] if (engine.DATA/'xray.log').exists() else '',
+       'regdomain_restore':(network.RUNTIME/'regdomain_restore.log').read_text(errors='replace')[-500:] if (network.RUNTIME/'regdomain_restore.log').exists() else ''})
 
 def shutdown(*_):
     global process
