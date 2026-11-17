@@ -146,12 +146,18 @@ def apply_rules(v):
     # Intentionally no automatic cleanup of another process's tables on collision.
     existing=run(['nft','list','table','inet',NFT_NAME],check=False)
     if existing.returncode==0:raise ValueError('Таблица уже существует; выключите gateway через панель')
+    route = ['local','default','dev','lo','table',TABLE]
+    rule = ['pref',PREF,'fwmark',MARK,'lookup',TABLE]
+    run(['ip','-4','route','add',*route])
     try:
-        run(['ip','-4','route','add','local','default','dev','lo','table',TABLE])
-        run(['ip','-4','rule','add','pref',PREF,'fwmark',MARK,'lookup',TABLE])
-        run(['nft','-f','-'],input=rules)
+        run(['ip','-4','rule','add',*rule])
+        try:
+            run(['nft','-f','-'],input=rules)
+        except Exception:
+            run(['ip','-4','rule','del',*rule],check=False)
+            raise
     except Exception:
-        remove_rules()
+        run(['ip','-4','route','del',*route],check=False)
         raise
 
 def remove_rules():

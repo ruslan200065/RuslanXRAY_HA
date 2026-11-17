@@ -1,4 +1,5 @@
 import json, os, subprocess, threading, time, signal
+from functools import wraps
 from pathlib import Path
 from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.exceptions import HTTPException
@@ -14,11 +15,37 @@ services=network.ClientServices()
 
 def reply_error(e,code=400):return jsonify({'error':str(e)}),code
 
+def serialized(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        with LOCK:
+            return view(*args, **kwargs)
+    return wrapped
+
+def xray_running():
+    return process is not None and process.poll() is None
+
+def gateway_started():
+    return process is not None or bool(services.daemons)
+
+def stop_xray(timeout=5):
+    global process
+    if xray_running():
+        process.terminate()
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+    process=None
+
 @app.errorhandler(Exception)
 def error_handler(e):
     if isinstance(e,HTTPException):return reply_error(e.description,e.code)
+    if isinstance(e, (ValueError, TypeError)):
+        return reply_error(e)
     app.logger.exception('API failure')
-    return reply_error(e,500)
+    return reply_error('Внутренняя ошибка. Подробности в журнале приложения.',500)
 
 @app.before_request
 def ingress_only():
@@ -28,29 +55,37 @@ def ingress_only():
         return reply_error('Доступ только через HA Ingress',403)
 
 @app.get('/')
-def index():return send_from_directory('/app','index.html')
+def index():return send_from_directory(Path(__file__).resolve().parent,'index.html')
 @app.get('/api/status')
+@serialized
 def status():
-    global process
-    return jsonify({'interfaces':engine.interfaces(),'settings':engine.settings(),
-       'profile_present':engine.PROFILE.is_file(), 'running':bool(process and process.poll() is None),
-       'rules_present':engine.rules_present(),'services_running':services.alive(),
+    settings = engine.settings().copy()
+    settings['wifi_password_saved'] = bool(settings.pop('wifi_password'))
+    rules = engine.rules_present()
+    active = xray_running() and rules and services.alive()
+    return jsonify({'interfaces':engine.interfaces(),'settings':settings,
+       'profile_present':engine.PROFILE.is_file(), 'running':active,
+       'needs_stop':gateway_started() or rules, 'rules_present':rules,
        'error':LAST_ERROR})
 
 @app.post('/api/settings')
+@serialized
 def update_settings():
-    if process and process.poll() is None:return reply_error('Сначала остановите шлюз')
+    if gateway_started():return reply_error('Сначала остановите шлюз')
     v=request.get_json(force=True)
     if not isinstance(v,dict):return reply_error('Неверный формат')
     v={**engine.defaults(),**{k:v[k] for k in engine.defaults() if k in v}}
+    if not v['wifi_password']:
+        v['wifi_password'] = engine.settings()['wifi_password']
     engine.validate_settings(v,require_address=False)
     engine.save_settings(v)
-    return jsonify({'ok':True,'settings':v})
+    return jsonify({'ok':True})
 
 @app.post('/api/profile')
+@serialized
 def upload_profile():
     global LAST_ERROR
-    if process and process.poll() is None:return reply_error('Остановите шлюз перед обновлением профиля')
+    if gateway_started():return reply_error('Остановите шлюз перед обновлением профиля')
     obj=request.get_json(force=True)
     if not isinstance(obj,dict) or 'profile' not in obj:return reply_error('Ожидается объект profile')
     cfg=obj['profile']
@@ -63,28 +98,36 @@ def upload_profile():
     return jsonify({'ok':True,'outbounds':len(cfg['outbounds'])})
 
 @app.get('/api/subscription')
+@serialized
 def subscription_info():
     return jsonify(subscriptions.list_catalog())
 
 @app.post('/api/subscription')
+@serialized
 def subscription_save():
-    if process and process.poll() is None:return reply_error('Сначала остановите шлюз')
-    with LOCK:
-        return jsonify(subscriptions.save_config(request.get_json(force=True)))
+    if gateway_started():return reply_error('Сначала остановите шлюз')
+    obj = request.get_json()
+    if not isinstance(obj, dict):
+        return reply_error('Ожидается объект настроек подписки')
+    return jsonify(subscriptions.save_config(obj))
 
 @app.post('/api/subscription/refresh')
+@serialized
 def subscription_refresh():
-    if process and process.poll() is None:return reply_error('Сначала остановите шлюз')
-    with LOCK:
-        return jsonify(subscriptions.update_catalog())
+    if gateway_started():return reply_error('Сначала остановите шлюз')
+    return jsonify(subscriptions.update_catalog())
 
 @app.post('/api/subscription/select')
+@serialized
 def subscription_select():
-    if process and process.poll() is None:return reply_error('Сначала остановите шлюз')
-    with LOCK:
-        return jsonify(subscriptions.select_profile(request.get_json(force=True).get('id')))
+    if gateway_started():return reply_error('Сначала остановите шлюз')
+    obj = request.get_json()
+    if not isinstance(obj, dict):
+        return reply_error('Ожидается объект с ID профиля')
+    return jsonify(subscriptions.select_profile(obj.get('id')))
 
 @app.get('/api/preview')
+@serialized
 def preview():
     settings=engine.settings();u,d,port=engine.validate_settings(settings)
     if not engine.PROFILE.is_file():return reply_error('Сначала загрузите JSON-профиль')
@@ -99,13 +142,14 @@ def preview():
 def start():
     global process,LAST_ERROR
     with LOCK:
-        if process and process.poll() is None:return reply_error('Уже запущено')
+        if gateway_started():return reply_error('Сначала остановите шлюз')
         if engine.rules_present():return reply_error('Обнаружены оставшиеся firewall-правила; нажмите Сбросить правила')
         if not engine.PROFILE.is_file():return reply_error('Загрузите конфигурацию Xray')
         v=engine.settings();u,d,port=engine.validate_settings(v)
         cfg=engine.build_profile(json.loads(engine.PROFILE.read_text()),port,v['route_mode'],v['target'])
         engine.verify_profile(cfg)
         tmp=engine.EFFECTIVE.with_suffix('.tmp');tmp.write_text(json.dumps(cfg,ensure_ascii=False,indent=2));os.chmod(tmp,0o600);tmp.replace(engine.EFFECTIVE)
+        rules_applied = False
         try:
             logpath = engine.DATA / 'xray.log'
             if logpath.exists() and logpath.stat().st_size > 1024*1024:
@@ -118,33 +162,36 @@ def start():
                 process=None
                 raise ValueError('Xray остановился: '+message)
             engine.apply_rules(v)
+            rules_applied = True
             services.start(v,engine.interfaces())
             LAST_ERROR=''
         except Exception as e:
-            if process and process.poll() is None:process.terminate();process.wait(timeout=5)
-            process=None
-            services.stop()
-            engine.remove_rules()
+            try:
+                stop_xray()
+                services.stop()
+            finally:
+                if rules_applied:
+                    engine.remove_rules()
             LAST_ERROR=str(e)
             return reply_error(e)
         return jsonify({'ok':True})
 
 @app.post('/api/stop')
 def stop():
-    global process
+    global LAST_ERROR
     with LOCK:
-        if process and process.poll() is None:
-            process.terminate()
-            try:process.wait(timeout=5)
-            except subprocess.TimeoutExpired:process.kill();process.wait()
-        process=None
-        services.stop()
-        engine.remove_rules()
+        try:
+            stop_xray()
+            services.stop()
+        finally:
+            engine.remove_rules()
+        LAST_ERROR=''
     return jsonify({'ok':True})
 
 @app.post('/api/reset')
+@serialized
 def reset():
-    if process and process.poll() is None:return reply_error('Сначала остановите шлюз')
+    if gateway_started():return reply_error('Сначала остановите шлюз')
     engine.remove_rules()
     return jsonify({'ok':True})
 
@@ -170,13 +217,12 @@ def diagnostics():
        'regdomain_restore':(network.RUNTIME/'regdomain_restore.log').read_text(errors='replace')[-500:] if (network.RUNTIME/'regdomain_restore.log').exists() else ''})
 
 def shutdown(*_):
-    global process
-    if process and process.poll() is None:
-        process.terminate()
-        try: process.wait(timeout=4)
-        except subprocess.TimeoutExpired: process.kill();process.wait()
-    services.stop()
-    engine.remove_rules()
+    try:
+        stop_xray(timeout=4)
+        services.stop()
+    finally:
+        if engine.rules_present():
+            engine.remove_rules()
     raise SystemExit(0)
 
 if __name__=='__main__':
