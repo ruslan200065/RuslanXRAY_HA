@@ -150,7 +150,7 @@ def reset():
 
 @app.get('/api/wifi-capabilities')
 def wifi_capabilities():
-    dev=engine.settings().get('downstream','')
+    dev=request.args.get('device',engine.settings().get('downstream',''))
     selected=next((i for i in engine.interfaces() if i['name']==dev and i['wifi']),None)
     if not selected:return reply_error('Выберите Wi-Fi интерфейс в настройках сети')
     return jsonify(network.radio_capabilities(dev))
