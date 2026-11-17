@@ -97,5 +97,31 @@ class DescriptorTest(unittest.TestCase):
         self.assertEqual(len(result),1)
         self.assertFalse(result[0]['valid_rtw89_topology'])
 
+
+    def test_read_power_register_uses_upstream_rtw89_usb_protocol(self):
+        device = MagicMock(idVendor=0x0bda,idProduct=0xb851)
+        device.ctrl_transfer.return_value = bytes((0x78,0x56,0x34,0x12))
+        transport=usbuserspace.RTL8851BUTransport(device)
+        transport.claimed=True
+        result=transport.read_sys_pw_ctrl()
+        device.ctrl_transfer.assert_called_once_with(0xC0,0x05,0x0004,0,4,timeout=500)
+        self.assertEqual(result['value'],'0x12345678')
+        self.assertEqual(result['raw_le'],'78563412')
+
+    def test_register_read_denied_until_claimed(self):
+        device = MagicMock(idVendor=0x0bda,idProduct=0xb851)
+        transport=usbuserspace.RTL8851BUTransport(device)
+        with self.assertRaises(RuntimeError):
+            transport.read_sys_pw_ctrl()
+        device.ctrl_transfer.assert_not_called()
+
+    def test_register_read_rejects_short_response(self):
+        device = MagicMock(idVendor=0x0bda,idProduct=0xb851)
+        device.ctrl_transfer.return_value = bytes((0x12,0x34))
+        transport=usbuserspace.RTL8851BUTransport(device)
+        transport.claimed=True
+        with self.assertRaises(IOError):
+            transport.read_sys_pw_ctrl()
+
 if __name__ == '__main__':
     unittest.main()
