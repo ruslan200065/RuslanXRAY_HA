@@ -7,6 +7,7 @@ import network
 import subscriptions
 import usbwifi
 import usbuserspace
+import rtw8851b_firmware
 app=Flask(__name__,static_folder=None)
 app.config['MAX_CONTENT_LENGTH']=2*1024*1024
 LOCK=threading.RLock()
@@ -150,6 +151,11 @@ def reset():
     engine.remove_rules()
     return jsonify({'ok':True})
 
+@app.get('/api/usb-wifi/firmware')
+def usb_wifi_firmware():
+    # Metadata only. The image is never flashed or sent to the hardware here.
+    return jsonify(rtw8851b_firmware.inventory())
+
 @app.get('/api/usb-wifi/userspace')
 def usb_userspace_status():
     return jsonify(usbuserspace.probe())
@@ -197,7 +203,7 @@ def diagnostics():
         if item['wifi']:
             try: wifi[item['name']]=network.radio_capabilities(item['name'])
             except Exception as exc: wifi[item['name']]={'error':str(exc)}
-    return jsonify({'interfaces':engine.interfaces(),'wifi':wifi,'usb_wifi':usbwifi.state(),'usb_userspace':usbuserspace.probe(),
+    return jsonify({'interfaces':engine.interfaces(),'wifi':wifi,'usb_wifi':usbwifi.state(),'usb_userspace':usbuserspace.probe(),'usb_firmware':rtw8851b_firmware.inventory(),
        'routes':engine.run(['ip','-4','route','show'],check=False).stdout[-8000:],
        'rules':engine.run(['nft','list','table','inet',engine.NFT_NAME],check=False).stdout[-8000:],
        'service_logs': {n:(network.RUNTIME/(n+'.log')).read_text(errors='replace')[-3000:] if (network.RUNTIME/(n+'.log')).exists() else '' for n in ('hostapd','dnsmasq')},
