@@ -121,11 +121,14 @@ def list_catalog():
     return {'profiles':profiles,'selected':selected,'configured':bool(c['url']),
             'user_agent':c['user_agent'],'remnawave':c['remnawave']}
 
-def select_profile(profile_id):
+def get_profile(profile_id):
     if type(profile_id) is not int or not 0<=profile_id<128:raise ValueError('Неверный ID')
     path=CATALOG/f'{profile_id}.json'
     if not path.exists():raise ValueError('Профиль отсутствует')
-    raw=load(path,{})
+    return load(path,{})
+
+def select_profile(profile_id):
+    raw=get_profile(profile_id)
     v=engine.settings()
     engine.verify_profile(engine.build_profile(raw,int(v['port']),v['route_mode'],v['target']))
     save_json(engine.PROFILE,raw)

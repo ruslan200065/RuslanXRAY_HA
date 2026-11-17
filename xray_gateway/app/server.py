@@ -6,9 +6,11 @@ from werkzeug.exceptions import HTTPException
 import engine
 import network
 import subscriptions
+import latency
 app=Flask(__name__,static_folder=None)
 app.config['MAX_CONTENT_LENGTH']=2*1024*1024
 LOCK=threading.RLock()
+PING_LOCK=threading.Lock()
 process=None
 LAST_ERROR=''
 services=network.ClientServices()
@@ -54,8 +56,19 @@ def ingress_only():
     if remote != '172.30.32.2':
         return reply_error('Доступ только через HA Ingress',403)
 
+APP_DIR = Path(__file__).resolve().parent
+
 @app.get('/')
-def index():return send_from_directory(Path(__file__).resolve().parent,'index.html')
+def index():
+    return send_from_directory(APP_DIR, 'index.html')
+
+@app.get('/panel.css')
+def panel_css():
+    return send_from_directory(APP_DIR, 'panel.css')
+
+@app.get('/panel.js')
+def panel_js():
+    return send_from_directory(APP_DIR, 'panel.js')
 @app.get('/api/status')
 @serialized
 def status():
@@ -126,6 +139,27 @@ def subscription_select():
         return reply_error('Ожидается объект с ID профиля')
     return jsonify(subscriptions.select_profile(obj.get('id')))
 
+@app.post('/api/ping')
+def ping():
+    obj = request.get_json()
+    if not isinstance(obj, dict):
+        return reply_error('Ожидается объект настроек проверки')
+    if not PING_LOCK.acquire(blocking=False):
+        return reply_error('Проверка уже идёт', 409)
+    try:
+        with LOCK:
+            profile_id = obj.get('id')
+            if profile_id is None:
+                if not engine.PROFILE.is_file():
+                    return reply_error('Сначала выберите профиль')
+                profile = subscriptions.load(engine.PROFILE, None)
+            else:
+                profile = subscriptions.get_profile(profile_id)
+            settings = engine.settings()
+        return jsonify({'milliseconds': latency.measure(profile, settings)})
+    finally:
+        PING_LOCK.release()
+
 @app.get('/api/preview')
 @serialized
 def preview():
@@ -143,7 +177,7 @@ def start():
     global process,LAST_ERROR
     with LOCK:
         if gateway_started():return reply_error('Сначала остановите шлюз')
-        if engine.rules_present():return reply_error('Обнаружены оставшиеся firewall-правила; нажмите Сбросить правила')
+        if engine.rules_present():return reply_error('Обнаружены оставшиеся firewall-правила; нажмите «Остановить»')
         if not engine.PROFILE.is_file():return reply_error('Загрузите конфигурацию Xray')
         v=engine.settings();u,d,port=engine.validate_settings(v)
         cfg=engine.build_profile(json.loads(engine.PROFILE.read_text()),port,v['route_mode'],v['target'])
@@ -160,7 +194,8 @@ def start():
             if process.poll() is not None:
                 message=logpath.read_text(errors='replace')[-2500:]
                 process=None
-                raise ValueError('Xray остановился: '+message)
+                app.logger.error('Xray stopped during startup: %s', message)
+                raise ValueError('Xray не запустился. Проверьте профиль и журнал приложения.')
             engine.apply_rules(v)
             rules_applied = True
             services.start(v,engine.interfaces())
@@ -201,20 +236,6 @@ def wifi_capabilities():
     selected=next((i for i in engine.interfaces() if i['name']==dev and i['wifi']),None)
     if not selected:return reply_error('Выберите Wi-Fi интерфейс в настройках сети')
     return jsonify(network.radio_capabilities(dev))
-
-@app.get('/api/diagnostics')
-def diagnostics():
-    wifi={}
-    for item in engine.interfaces():
-        if item['wifi']:
-            try: wifi[item['name']]=network.radio_capabilities(item['name'])
-            except Exception as exc: wifi[item['name']]={'error':str(exc)}
-    return jsonify({'interfaces':engine.interfaces(),'wifi':wifi,
-       'routes':engine.run(['ip','-4','route','show'],check=False).stdout[-8000:],
-       'rules':engine.run(['nft','list','table','inet',engine.NFT_NAME],check=False).stdout[-8000:],
-       'service_logs': {n:(network.RUNTIME/(n+'.log')).read_text(errors='replace')[-3000:] if (network.RUNTIME/(n+'.log')).exists() else '' for n in ('hostapd','dnsmasq')},
-       'xray_log':(engine.DATA/'xray.log').read_text(errors='replace')[-4000:] if (engine.DATA/'xray.log').exists() else '',
-       'regdomain_restore':(network.RUNTIME/'regdomain_restore.log').read_text(errors='replace')[-500:] if (network.RUNTIME/'regdomain_restore.log').exists() else ''})
 
 def shutdown(*_):
     try:
