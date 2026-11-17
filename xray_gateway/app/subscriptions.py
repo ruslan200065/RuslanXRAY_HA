@@ -1,5 +1,5 @@
 """Native Xray JSON subscriptions with Remnawave /json, User-Agent and HWID."""
-import base64, json, os, re, shutil, tempfile, uuid
+import base64, json, os, re, shutil, tempfile, threading, uuid
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
@@ -9,16 +9,24 @@ CONFIG=ROOT/'config.json'
 CATALOG=ROOT/'profiles'
 SELECTED=ROOT/'selected.json'
 HWID=ROOT/'hwid'
+HWID_LOCK = threading.Lock()
 
-def save_json(path,obj):
+def save_text(path, value):
     path.parent.mkdir(parents=True,exist_ok=True)
-    fd,tmp=tempfile.mkstemp(prefix='.new-',dir=str(path.parent))
+    fd, filename = tempfile.mkstemp(prefix='.new-', dir=path.parent)
+    temporary = Path(filename)
     try:
-        with os.fdopen(fd,'w',encoding='utf-8') as f:
-            json.dump(obj,f,ensure_ascii=False,indent=2);f.flush();os.fsync(f.fileno())
-        os.chmod(tmp,0o600);os.replace(tmp,path)
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o600)
+        temporary.replace(path)
     finally:
-        if os.path.exists(tmp):os.unlink(tmp)
+        temporary.unlink(missing_ok=True)
+
+def save_json(path, obj):
+    save_text(path, json.dumps(obj, ensure_ascii=False, indent=2))
 
 def load(path,default):
     return json.loads(path.read_text(encoding='utf-8')) if path.exists() else default
@@ -50,15 +58,17 @@ def save_config(data):
     return {'ok':True}
 
 def hwid():
-    if HWID.exists():
-        value=HWID.read_text(encoding='ascii').strip()
-        if re.fullmatch(r'[a-fA-F0-9-]{36}',value):return value
-    ROOT.mkdir(parents=True,exist_ok=True)
-    value=str(uuid.uuid4())
-    try:fd=os.open(HWID,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
-    except FileExistsError:return HWID.read_text(encoding='ascii').strip()
-    with os.fdopen(fd,'w',encoding='ascii') as f:f.write(value+'\n')
-    return value
+    """Keep one UUID for the lifetime of the app's persistent data."""
+    with HWID_LOCK:
+        try:
+            value = HWID.read_text(encoding='ascii').strip()
+            if str(uuid.UUID(value)) == value.lower():
+                return value
+        except (FileNotFoundError, ValueError):
+            pass
+        value = str(uuid.uuid4())
+        save_text(HWID, value + '\n')
+        return value
 
 def parse_catalog(payload):
     if len(payload)>6*1024*1024:raise ValueError('Подписка слишком большая')
@@ -121,11 +131,14 @@ def list_catalog():
     return {'profiles':profiles,'selected':selected,'configured':bool(c['url']),
             'user_agent':c['user_agent'],'remnawave':c['remnawave']}
 
-def select_profile(profile_id):
+def get_profile(profile_id):
     if type(profile_id) is not int or not 0<=profile_id<128:raise ValueError('Неверный ID')
     path=CATALOG/f'{profile_id}.json'
     if not path.exists():raise ValueError('Профиль отсутствует')
-    raw=load(path,{})
+    return load(path,{})
+
+def select_profile(profile_id):
+    raw=get_profile(profile_id)
     v=engine.settings()
     engine.verify_profile(engine.build_profile(raw,int(v['port']),v['route_mode'],v['target']))
     save_json(engine.PROFILE,raw)
