@@ -11,6 +11,29 @@ VID, PID = 0x0BDA, 0xB851
 USB_DIR_IN = 0x80
 USB_TRANSFER = {0: 'control', 1: 'isochronous', 2: 'bulk', 3: 'interrupt'}
 
+# Read-only register snapshot addresses from Linux drivers/net/wireless/
+# realtek/rtw89/reg.h. No dynamic address input over HTTP.
+RTL8851BU_SNAPSHOT_REGISTERS = {
+    0x0004: 'R_AX_SYS_PW_CTRL',
+    0x0008: 'R_AX_SYS_CLK_CTRL',
+    0x1060: 'R_AX_USB_ENDPOINT_0',
+    0x1068: 'R_AX_USB_ENDPOINT_2',
+    0x1078: 'R_AX_USB_HOST_REQUEST_2',
+}
+
+# Flags confirmed in upstream rtw89/reg.h; these are bit values only,
+# not a judgement that the device has completed firmware/MAC initialization.
+POWER_FLAGS = {
+    'sys_power_ready': 17,
+    'wlan_power_enabled': 16,
+    'mac_on_requested': 8,
+    'mac_off_requested': 9,
+    'wlan_suspend_enabled': 11,
+    'pcie_suspend_enabled': 12,
+    'power_swr_enabled': 28,
+}
+
+
 
 def descriptor_report(device):
     """Interpret cached standard USB descriptors without claiming the device."""
@@ -247,6 +270,28 @@ class RTL8851BUTransport:
             'operation': 'vendor control read 0xc0/0x05',
         }
 
+    def read_register(self, address, timeout=500):
+        """Read a fixed upstream rtw89 register through USB vendor READ only.
+
+        Caller may pass ONLY the addresses in RTL8851BU_SNAPSHOT_REGISTERS.
+        Hardware may decline reads of powered-down blocks; report per-register.
+        """
+        self._require_open()
+        if address not in RTL8851BU_SNAPSHOT_REGISTERS:
+            raise ValueError('Register outside the fixed read-only diagnostic allowlist')
+        raw = self.device.ctrl_transfer(0xC0, 0x05, address & 0xffff,
+                                        (address >> 16) & 0xff, 4, timeout=timeout)
+        data = bytes(raw)
+        if len(data) != 4:
+            raise IOError('Register 0x%04x: expected four bytes, got %d' %
+                          (address, len(data)))
+        return {
+            'name': RTL8851BU_SNAPSHOT_REGISTERS[address],
+            'address': '0x%04x' % address,
+            'raw_le': data.hex(),
+            'value': '0x%08x' % int.from_bytes(data, 'little'),
+        }
+
     def bulk_read(self, endpoint, length, timeout=1000):
         self._require_open()
         if not (0x80 <= endpoint <= 0x8F):
@@ -302,3 +347,64 @@ def read_chip_power_register():
     finally:
         transport.close()
         usb.util.dispose_resources(device)
+
+def decode_power_flags(value):
+    """Decode only documented RTL8851B SYS_PW_CTRL flag bits."""
+    return {name: bool(value & (1 << bit)) for name, bit in POWER_FLAGS.items()}
+
+
+def snapshot_chip_registers():
+    """Explicit one-shot read-only hardware snapshot, WLAN interface 2 only.
+
+    Does NOT reset the device, write registers, load firmware or transmit RF.
+    Failure of one peripheral register is retained as an error without
+    cancelling the remaining read-only attempts.
+    """
+    try:
+        import usb.core
+        import usb.util
+        from usb.backend import libusb1
+    except ImportError as exc:
+        raise ValueError('PyUSB/libusb недоступен: ' + str(exc))
+    backend = libusb1.get_backend()
+    if backend is None:
+        raise ValueError('libusb backend недоступен')
+    devices = list(usb.core.find(find_all=True, idVendor=VID,
+                                 idProduct=PID, backend=backend) or [])
+    if len(devices) != 1:
+        raise ValueError('Нужен один RTL8851BU 0bda:b851; обнаружено: ' + str(len(devices)))
+    device = devices[0]
+    candidates = [x for x in wlan_candidates(descriptor_report(device))
+                  if x['valid_rtw89_topology']]
+    if len(candidates) != 1 or candidates[0]['interface_number'] != 2:
+        raise ValueError('USB WLAN интерфейс №2 не соответствует ожидаемой топологии')
+    transport = RTL8851BUTransport(device)
+    try:
+        transport.open_wlan(2)
+        registers = []
+        for address, name in RTL8851BU_SNAPSHOT_REGISTERS.items():
+            try:
+                registers.append(transport.read_register(address))
+            except (usb.core.USBError, IOError, OSError, ValueError) as exc:
+                registers.append({
+                    'name': name, 'address': '0x%04x' % address,
+                    'error': str(exc)[:300],
+                })
+        power = next((x for x in registers if x['address'] == '0x0004'), {})
+        flags = decode_power_flags(int(power['value'], 16)) if 'value' in power else {}
+        return {
+            'stage': 'rtl8851bu_readonly_register_snapshot',
+            'status': 'register_snapshot_completed',
+            'usb_id': '0bda:b851',
+            'interface_number': 2,
+            'registers': registers,
+            'power_flags': flags,
+            'usb_only': True,
+            'firmware_initialized': False,
+            'ap_ready': False,
+            'message': 'Считаны доступные регистры RTL8851BU без записи, загрузки firmware и RF TX.',
+        }
+    finally:
+        transport.close()
+        usb.util.dispose_resources(device)
+
