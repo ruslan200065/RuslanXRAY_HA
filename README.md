@@ -32,6 +32,6 @@ VPN-шлюз для **Home Assistant OS**. Устройства на выдел�
 
 ---
 
-### OpenInet VPN
+### RuslanXRAY VPN
 
 VPN-сервис автора Ruslan Xray Gateway. [Открыть VPN-бота в Telegram](https://t.me/openinetkras_v2_bot)
