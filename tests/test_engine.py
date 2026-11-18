@@ -37,4 +37,14 @@ class EngineTest(unittest.TestCase):
                     engine.apply_rules({})
         self.assertEqual(run.call_count, 3)
 
+    def test_local_lan_access_allows_only_selected_subnets(self):
+        settings = {**engine.defaults(), 'upstream': 'eth0', 'downstream': 'eth1'}
+        paths = engine.local_lan_paths(settings, [{'name': 'eth0', 'addresses': ['192.168.0.89/24']}])
+        rules = engine.nft_rules('eth1', 12345, lan_paths=paths)
+        self.assertIn('iifname "eth1" oifname "eth0" ip saddr 192.168.50.0/24 ip daddr 192.168.0.0/24 accept', rules)
+        self.assertIn('iifname "eth0" oifname "eth1" ip saddr 192.168.0.0/24 ip daddr 192.168.50.0/24 accept', rules)
+        self.assertIn('iifname "eth1" drop', rules)
+        self.assertIn('tproxy ip to :12345', rules)
+        self.assertNotIn('oifname "eth0"', engine.nft_rules('eth1', 12345))
+
 if __name__=='__main__':unittest.main()
