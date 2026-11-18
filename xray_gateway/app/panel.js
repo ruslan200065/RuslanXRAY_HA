@@ -270,7 +270,7 @@ function updateNetworkMode(preferred = field('downstream').value) {
   $('#wifi-fields').hidden = !wifi;
   $('#wifi-advanced').hidden = !wifi;
   $('#mode-hint').textContent = {
-    dhcp: 'Выберите выделенный порт. Если HAOS снимает адрес, закрепите этот же IPv4 на порту в HAOS без шлюза и DNS. DHCP раздаёт RuslanXRAY.',
+    dhcp: 'Выберите выделенный порт. При запуске RuslanXRAY берёт управление портом и запускает DHCP.',
     wifi_ap: 'Адаптер должен поддерживать режим точки доступа.',
     manual: 'Адрес шлюза должен быть назначен интерфейсу в Home Assistant.'
   }[mode];

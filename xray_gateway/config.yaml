@@ -1,7 +1,7 @@
 name: "Ruslan Xray Gateway"
 slug: "ruslan_xray_gateway"
 description: "Xray VPN gateway: TProxy, Remnawave, Ethernet DHCP and Wi-Fi AP via supported host interfaces"
-version: "0.3.20"
+version: "0.3.21"
 url: "https://github.com/ruslan200065/RuslanXRAY_HA"
 arch:
   - amd64
@@ -10,6 +10,7 @@ startup: services
 boot: manual
 init: false
 host_network: true
+host_dbus: true
 privileged:
   - NET_ADMIN
   - NET_RAW

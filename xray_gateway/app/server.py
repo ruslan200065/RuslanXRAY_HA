@@ -228,6 +228,7 @@ def start():
     global process,LAST_ERROR
     with LOCK:
         if gateway_started():return reply_error('Сначала остановите шлюз')
+        network.restore_downstream(recover=True)
         if engine.rules_present():return reply_error('Обнаружены оставшиеся firewall-правила; нажмите «Остановить»')
         if not engine.PROFILE.is_file():return reply_error('Загрузите конфигурацию Xray')
         v=engine.settings();u,d,port=engine.validate_settings(v)
@@ -300,6 +301,11 @@ def shutdown(*_):
 if __name__=='__main__':
     signal.signal(signal.SIGTERM,shutdown)
     from waitress import serve
+
+    try:
+        network.restore_downstream(recover=True)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        app.logger.exception('Не удалось восстановить управление выделенным портом')
 
     serve(app, host='0.0.0.0', port=int(os.environ.get('INGRESS_PORT', '8099')),
           max_request_body_size=app.config['MAX_CONTENT_LENGTH'])
