@@ -292,4 +292,7 @@ def shutdown(*_):
 
 if __name__=='__main__':
     signal.signal(signal.SIGTERM,shutdown)
-    app.run(host='0.0.0.0',port=int(os.environ.get('INGRESS_PORT','8099')),threaded=True)
+    from waitress import serve
+
+    serve(app, host='0.0.0.0', port=int(os.environ.get('INGRESS_PORT', '8099')),
+          max_request_body_size=app.config['MAX_CONTENT_LENGTH'])
