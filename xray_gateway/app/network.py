@@ -239,10 +239,48 @@ def dnsmasq_config(cfg):
     gw=ipaddress.ip_interface(cfg['gateway_cidr']).ip
     mask=ipaddress.ip_interface(cfg['gateway_cidr']).network.netmask
     return (f'interface={cfg["downstream"]}\nbind-interfaces\n'
-            'port=0\ndhcp-authoritative\n'
+            f'port=0\ndhcp-authoritative\ndhcp-leasefile={RUNTIME / "dnsmasq.leases"}\n'
+            'log-facility=-\n'
             f'dhcp-range={cfg["dhcp_start"]},{cfg["dhcp_end"]},{mask},12h\n'
             f'dhcp-option=option:router,{gw}\ndhcp-option=option:dns-server,1.1.1.1,9.9.9.9\n'
             'log-dhcp\n')
+
+
+def client_network_health(cfg, interfaces):
+    device = cfg['downstream']
+    link = next((item for item in interfaces if item['name'] == device), None)
+    if link is None:
+        return 'failed', f'Клиентский интерфейс {device} отсутствует.'
+    address = str(ipaddress.ip_interface(cfg['gateway_cidr']))
+    if address not in link['addresses']:
+        return 'failed', (f'На {device} нет адреса {address}. Остановите шлюз и проверьте '
+                          'настройки IPv4 выделенного порта в HAOS.')
+    if cfg['client_service'] == 'dhcp' and link['status'].upper() in ('DOWN', 'LOWERLAYERDOWN', 'DORMANT'):
+        return 'starting', f'Нет линка на {device}. Проверьте кабель и порт роутера.'
+    return 'ready', ''
+
+
+def dhcp_lease_count(cfg):
+    try:
+        leases = (RUNTIME / 'dnsmasq.leases').read_text(encoding='utf-8', errors='replace')
+    except FileNotFoundError:
+        return 0
+    start = ipaddress.IPv4Address(cfg['dhcp_start'])
+    end = ipaddress.IPv4Address(cfg['dhcp_end'])
+    now = int(time.time())
+    count = 0
+    for line in leases.splitlines():
+        fields = line.split()
+        if len(fields) < 3:
+            continue
+        try:
+            expiry = int(fields[0])
+            address = ipaddress.IPv4Address(fields[2])
+        except ValueError:
+            continue
+        if (expiry == 0 or expiry > now) and start <= address <= end:
+            count += 1
+    return count
 
 
 def hostapd_state(device):

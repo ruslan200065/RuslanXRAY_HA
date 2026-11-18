@@ -70,7 +70,8 @@ function renderGateway() {
   $('#connection-info').textContent = [
     profile?.name || (state?.profile_present ? 'Сохранённый профиль' : ''),
     state?.settings.downstream && (state.settings.client_service === 'wifi_ap'
-      ? state.settings.wifi_ssid : state.settings.downstream)
+      ? state.settings.wifi_ssid : state.settings.downstream),
+    state?.running && state.dhcp ? 'Аренды DHCP: ' + state.dhcp.leases : ''
   ].filter(Boolean).join(' · ');
   const error = $('#gateway-error');
   error.textContent = state?.error || '';
@@ -269,7 +270,7 @@ function updateNetworkMode(preferred = field('downstream').value) {
   $('#wifi-fields').hidden = !wifi;
   $('#wifi-advanced').hidden = !wifi;
   $('#mode-hint').textContent = {
-    dhcp: 'Выберите выделенный порт для устройств или внешней точки доступа.',
+    dhcp: 'Выберите выделенный порт. Если HAOS снимает адрес, закрепите этот же IPv4 на порту в HAOS без шлюза и DNS. DHCP раздаёт RuslanXRAY.',
     wifi_ap: 'Адаптер должен поддерживать режим точки доступа.',
     manual: 'Адрес шлюза должен быть назначен интерфейсу в Home Assistant.'
   }[mode];
