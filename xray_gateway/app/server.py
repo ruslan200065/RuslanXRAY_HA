@@ -76,17 +76,24 @@ def panel_js():
 def status():
     settings = engine.settings().copy()
     settings['wifi_password_saved'] = bool(settings.pop('wifi_password'))
+    interfaces = engine.interfaces()
     rules = engine.rules_present()
+    started = gateway_started()
     healthy = xray_running() and rules and services.alive()
-    ap = services.ap_health() if gateway_started() else None
-    active = healthy and (ap is None or ap['phase'] == 'ready')
-    starting = healthy and ap is not None and ap['phase'] == 'starting'
-    return jsonify({'interfaces':engine.interfaces(),'settings':settings,
-       'profile_present':engine.PROFILE.is_file(), 'running':active,
-       'needs_stop':gateway_started() or rules, 'rules_present':rules,
-       'starting': starting,
-       'wifi_status': ap.get('message', '') if ap else '',
-       'error': LAST_ERROR or (ap['message'] if ap and ap['phase'] == 'failed' else '')})
+    ap = services.ap_health() if healthy else None
+    phase, message = network.client_network_health(settings, interfaces) if healthy else ('failed', '')
+    if phase == 'ready' and ap:
+        phase, message = ap['phase'], ap.get('message', '')
+    dhcp = None
+    if healthy and settings['client_service'] in ('dhcp', 'wifi_ap'):
+        dhcp = {'leases': network.dhcp_lease_count(settings)}
+    return jsonify({'interfaces': interfaces, 'settings': settings,
+       'profile_present': engine.PROFILE.is_file(), 'running': healthy and phase == 'ready',
+       'needs_stop': started or rules, 'rules_present': rules,
+       'starting': healthy and phase == 'starting',
+       'wifi_status': message if phase == 'starting' else '',
+       'dhcp': dhcp,
+       'error': LAST_ERROR or (message if phase == 'failed' else '')})
 
 @app.post('/api/settings')
 @serialized

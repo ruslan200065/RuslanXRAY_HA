@@ -178,4 +178,14 @@ class NetworkTest(unittest.TestCase):
             with patch.object(network.time, 'monotonic', return_value=11):
                 self.assertEqual(services.ap_health()['phase'], 'failed')
 
+    def test_ethernet_gateway_loses_address_and_carrier(self):
+        interface = {**DEVICES[1], 'status': 'UP'}
+        phase, error = network.client_network_health(BASE, [interface])
+        self.assertEqual(phase, 'failed')
+        self.assertIn('192.168.50.1/24', error)
+        interface.update(addresses=['192.168.50.1/24'], status='DOWN')
+        self.assertEqual(network.client_network_health(BASE, [interface])[0], 'starting')
+        interface['status'] = 'UP'
+        self.assertEqual(network.client_network_health(BASE, [interface])[0], 'ready')
+
 if __name__=='__main__':unittest.main()
