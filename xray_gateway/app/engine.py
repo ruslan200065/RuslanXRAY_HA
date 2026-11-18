@@ -35,7 +35,7 @@ def interfaces():
 
 def defaults():
     return {'upstream':'','downstream':'','intercept':False,'port':12345,'block_ipv6':True,
-            'client_service':'manual','gateway_cidr':'192.168.50.1/24',
+            'lan_access':False,'client_service':'manual','gateway_cidr':'192.168.50.1/24',
             'dhcp_start':'192.168.50.100','dhcp_end':'192.168.50.200',
             'wifi_ssid':'RuslanXRAY','wifi_password':'','wifi_band':'2.4','wifi_channel':6,
             'wifi_allow_dfs':False,
@@ -59,6 +59,8 @@ def validate_settings(v,require_address=True):
     if known[d]['is_default']: raise ValueError('Выходной интерфейс является текущим default route HAOS. Использовать его опасно')
     if not known[u]['is_default']: raise ValueError('WAN не является default route HAOS. В этой версии такая схема ещё не поддерживается')
     mode, _, subnet = network.validate_client_settings(v,li)
+    if v.get('lan_access'):
+        local_lan_paths(v, li)
     if require_address and mode == 'manual' and str(subnet) not in known[d]['addresses']:
         raise ValueError('В ручном режиме назначьте адрес шлюза из gateway_cidr в HAOS')
     port=int(v.get('port',12345))
@@ -115,11 +117,31 @@ def verify_profile(cfg):
         if result.returncode:raise ValueError((result.stderr or result.stdout or 'Ошибка Xray')[-2500:])
     finally:temp.unlink(missing_ok=True)
 
-def nft_rules(d, port, block_ipv6=True):
+def local_lan_paths(settings, interfaces):
+    wan = settings['upstream']
+    downstream = settings['downstream']
+    source = next((item for item in interfaces if item['name'] == wan), {})
+    private_blocks = [ipaddress.IPv4Network(block) for block in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')]
+    networks = {ipaddress.IPv4Interface(value).network for value in source.get('addresses', [])
+                if any(ipaddress.IPv4Interface(value).network.subnet_of(block) for block in private_blocks)}
+    if len(networks) != 1:
+        raise ValueError('Для доступа к локальной сети на WAN нужна одна частная IPv4-подсеть.')
+    return wan, downstream, next(iter(networks)), ipaddress.IPv4Interface(settings['gateway_cidr']).network
+
+
+def nft_rules(d, port, block_ipv6=True, lan_paths=None):
     # Do not install a NAT or general forward rule. All public IPv4 TCP/UDP is captured
     # at PREROUTING. A forward hook blocks all unmatched client traffic (fail closed).
     safe=', '.join(SAFE_NETS)
     ipv6 = f'\n  chain forward6 {{ type filter hook forward priority -15; policy accept; iifname "{d}" meta nfproto ipv6 drop; }}' if block_ipv6 else '' 
+    local_forward = ''
+    if lan_paths:
+        wan, downstream, main, clients = lan_paths
+        local_forward = (
+            f'iifname "{downstream}" oifname "{wan}" ip saddr {clients} ip daddr {main} accept\n'
+            f'    iifname "{wan}" oifname "{downstream}" ip saddr {main} ip daddr {clients} accept\n'
+            f'    oifname "{downstream}" drop\n    '
+        )
     return f"""table inet {NFT_NAME} {{
   chain intercept {{
     type filter hook prerouting priority mangle; policy accept;
@@ -132,7 +154,7 @@ def nft_rules(d, port, block_ipv6=True):
   }}
   chain lockdown {{
     type filter hook forward priority -15; policy accept;
-    iifname "{d}" drop
+    {local_forward}iifname "{d}" drop
   }}{ipv6}
 }}
 """
@@ -142,7 +164,10 @@ def route_commands():
 
 def apply_rules(v):
     u,d,port=validate_settings(v)
-    rules=nft_rules(d,port,bool(v.get('block_ipv6',True)))
+    lan_paths = local_lan_paths(v, interfaces()) if v.get('lan_access') else None
+    if lan_paths and Path('/proc/sys/net/ipv4/ip_forward').read_text().strip() != '1':
+        raise ValueError('HAOS отключил IPv4-пересылку. Доступ между подсетями недоступен.')
+    rules=nft_rules(d,port,bool(v.get('block_ipv6',True)),lan_paths)
     # Never replace shared firewall tables. Fail before changes on invalid nft syntax.
     test=run(['nft','-c','-f','-'],check=False,input=rules)
     if test.returncode:raise ValueError('Ошибка nft: '+test.stderr)

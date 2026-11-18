@@ -79,6 +79,8 @@
       </div>
       <details>
         <summary>Дополнительные настройки</summary>
+        <label class="check"><input name="lan_access" type="checkbox">Разрешить доступ между локальными подсетями</label>
+        <p id="lan-route-hint" class="muted" hidden></p>
         <div class="fields">
           <label>Интернет (WAN)<select name="upstream" required></select></label>
           <label>Порт TProxy<input name="port" type="number" min="1024" max="65535" required></label>

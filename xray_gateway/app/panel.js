@@ -252,6 +252,19 @@ $('#catalog-refresh').onclick = () => perform(async () => {
   watchRefresh();
 });
 
+function updateLanRouteHint() {
+  const hint = $('#lan-route-hint');
+  hint.hidden = !field('lan_access').checked;
+  const wan = state?.interfaces.find(item => item.name === field('upstream').value);
+  const addresses = wan?.addresses.map(address => address.split('/')[0]) || [];
+  const nextHop = addresses.length === 1 ? addresses[0] : 'IPv4 порта WAN HAOS';
+  hint.textContent = 'На главном роутере добавьте маршрут к клиентской подсети через ' + nextHop
+    + '. Устройства смогут обращаться по IP; широковещательное обнаружение через подсети недоступно.';
+}
+
+field('lan_access').onchange = updateLanRouteHint;
+field('upstream').onchange = updateLanRouteHint;
+
 function populateInterfaces(name, items, wanted) {
   const select = field(name);
   select.replaceChildren(new Option('Выберите интерфейс', ''));
@@ -344,6 +357,7 @@ $('#network-open').onclick = () => {
   const wanItems = state.interfaces.filter(item => item.is_default);
   populateInterfaces('upstream', wanItems, settings.upstream || wanItems[0]?.name);
   updateNetworkMode(settings.downstream);
+  updateLanRouteHint();
   networkDialog.showModal();
   loadRadio(settings.wifi_channel);
 };
@@ -360,6 +374,7 @@ network.onsubmit = event => {
   perform(async () => {
     const data = Object.fromEntries(new FormData(network));
     data.block_ipv6 = state.settings.block_ipv6;
+    data.lan_access = field('lan_access').checked;
     data.port = Number(data.port);
     if (data.client_service === 'wifi_ap' && (!data.wifi_channel || field('wifi_channel').selectedOptions[0]?.disabled)) {
       throw new Error('Выберите доступный канал Wi-Fi');

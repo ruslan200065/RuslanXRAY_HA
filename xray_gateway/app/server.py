@@ -218,7 +218,8 @@ def preview():
     if not engine.PROFILE.is_file():return reply_error('Сначала загрузите JSON-профиль')
     cfg=engine.build_profile(json.loads(engine.PROFILE.read_text()),port,settings['route_mode'],settings['target'])
     engine.verify_profile(cfg)
-    return jsonify({'nft':engine.nft_rules(d,port,bool(settings['block_ipv6'])),
+    return jsonify({'nft':engine.nft_rules(d,port,bool(settings['block_ipv6']),
+                                engine.local_lan_paths(settings, engine.interfaces()) if settings.get('lan_access') else None),
                     'dhcp': network.dnsmasq_config(settings) if settings['client_service']!='manual' else '',
                     'wifi': network.hostapd_config(settings).replace(settings['wifi_password'],'***') if settings['client_service']=='wifi_ap' else '',
                     'routes':engine.route_commands(),'note':'Адрес клиентского интерфейса назначается временно. NetworkManager и default route HAOS не изменяются. При включённом wifi_apply_regdomain iw reg set изменит глобальный Wi-Fi регион хоста; при остановке будет попытка восстановить предыдущий регион.'})
