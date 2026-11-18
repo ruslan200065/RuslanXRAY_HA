@@ -295,6 +295,112 @@ def hostapd_state(device):
     return ''
 
 
+NM_BUS = Path('/run/dbus/system_bus_socket')
+NM_NAME = 'org.freedesktop.NetworkManager'
+BOOT_ID = Path('/proc/sys/kernel/random/boot_id')
+
+
+def nm_call(path, method, *args):
+    return run(['dbus-send', f'--bus=unix:path={NM_BUS}', '--print-reply',
+                '--reply-timeout=2500', f'--dest={NM_NAME}', path, method, *args],
+               timeout=4).stdout
+
+
+def nm_device(device):
+    response = nm_call('/org/freedesktop/NetworkManager', f'{NM_NAME}.GetDeviceByIpIface',
+                       f'string:{device}')
+    match = re.search(r'object path "(/org/freedesktop/NetworkManager/Devices/\d+)"', response)
+    if not match:
+        raise ValueError(f'NetworkManager не нашёл интерфейс {device}.')
+    return match.group(1)
+
+
+def nm_managed(path):
+    response = nm_call(path, 'org.freedesktop.DBus.Properties.Get',
+                       f'string:{NM_NAME}.Device', 'string:Managed')
+    match = re.search(r'boolean (true|false)', response)
+    if not match:
+        raise ValueError('NetworkManager не сообщил состояние порта.')
+    return match.group(1) == 'true'
+
+
+def nm_set_managed(path, value):
+    flag = 'true' if value else 'false'
+    nm_call(path, 'org.freedesktop.DBus.Properties.Set',
+            f'string:{NM_NAME}.Device', 'string:Managed', f'variant:boolean:{flag}')
+
+
+def interface_link(device):
+    return json.loads(run(['ip', '-j', 'link', 'show', 'dev', device]).stdout)[0]
+
+
+def default_route_device(device):
+    for family in ('-4', '-6'):
+        routes = json.loads(run(['ip', '-j', family, 'route', 'show', 'default']).stdout)
+        if any(r.get('dev') == device or any(hop.get('dev') == device for hop in r.get('nexthops', []))
+               for r in routes):
+            return True
+    return False
+
+
+def release_downstream(device, address, had_address):
+    if not NM_BUS.is_socket():
+        if os.getenv('SUPERVISOR_TOKEN'):
+            raise ValueError('Нет доступа к системной шине HAOS для управления клиентским портом.')
+        return
+    if default_route_device(device):
+        raise ValueError(f'{device} используется маршрутом по умолчанию HAOS.')
+    try:
+        path = nm_device(device)
+        if not nm_managed(path):
+            return
+        link = interface_link(device)
+        record = {'device': device, 'boot_id': BOOT_ID.read_text().strip(),
+                  'ifindex': link['ifindex'], 'mac': link.get('address'),
+                  'address': '' if had_address else str(address)}
+        marker = RUNTIME / 'networkmanager.json'
+        temporary = marker.with_suffix('.tmp')
+        temporary.write_text(json.dumps(record), encoding='utf-8')
+        temporary.replace(marker)
+        nm_set_managed(path, False)
+        if nm_managed(path):
+            raise ValueError(f'NetworkManager не освободил {device}.')
+    except (subprocess.SubprocessError, OSError) as error:
+        raise ValueError(f'Не удалось передать {device} от NetworkManager приложению.') from error
+
+
+def restore_downstream(*, recover=False):
+    marker = RUNTIME / 'networkmanager.json'
+    try:
+        record = json.loads(marker.read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        return
+    device = record['device']
+    if record['boot_id'] != BOOT_ID.read_text().strip() or not (Path('/sys/class/net') / device).exists():
+        marker.unlink()
+        return
+    link = interface_link(device)
+    if link['ifindex'] != record['ifindex'] or link.get('address') != record['mac']:
+        marker.unlink()
+        return
+    if default_route_device(device):
+        raise ValueError(f'Восстановление NetworkManager отложено: {device} теперь используется как WAN.')
+    path = nm_device(device)
+    if not nm_managed(path):
+        if recover and record['address']:
+            run(['ip', '-4', 'address', 'del', record['address'], 'dev', device], check=False)
+        nm_set_managed(path, True)
+        if not nm_managed(path):
+            raise ValueError(f'Не удалось вернуть {device} под управление NetworkManager.')
+    marker.unlink()
+
+
+def interface_addresses(device):
+    links = json.loads(run(['ip', '-j', '-4', 'address', 'show', 'dev', device]).stdout)
+    return {f"{item['local']}/{item['prefixlen']}" for link in links for item in link.get('addr_info', [])}
+
+
+
 class ClientServices:
     def __init__(self):
         self.daemons=[]
@@ -331,7 +437,9 @@ class ClientServices:
                     dev, str(cfg.get('wifi_band', '2.4')), int(cfg.get('wifi_channel', 6)),
                     allow_dfs=bool(cfg.get('wifi_allow_dfs') and cfg.get('wifi_apply_regdomain')),
                 )
-            link = json.loads(run(['ip', '-j', 'link', 'show', 'dev', dev]).stdout)[0]
+            before = interface_addresses(dev)
+            release_downstream(dev, addr, str(addr) in before)
+            link = interface_link(dev)
             if 'UP' not in link.get('flags', []):
                 try:
                     run(['ip', 'link', 'set', 'dev', dev, 'up'])
@@ -340,7 +448,7 @@ class ClientServices:
                         ': '+(exc.stderr or str(exc))+
                         '. Проверьте драйвер и NetworkManager.')
                 self.owned_link=dev
-            if not any(addr == ipaddress.ip_interface(x) for x in next(i for i in interfaces if i['name']==dev)['addresses']):
+            if str(addr) not in interface_addresses(dev):
                 run(['ip','-4','address','add',str(addr),'dev',dev])
                 self.owned_ip=(str(addr),dev)
             if mode == 'wifi_ap':
@@ -411,6 +519,12 @@ class ClientServices:
         if self.owned_link:
             run(['ip','link','set','dev',self.owned_link,'down'],check=False)
             self.owned_link=None
+        try:
+            restore_downstream()
+        finally:
+            self.restore_regdomain()
+
+    def restore_regdomain(self):
         if self.owned_regdomain:
             expected, previous = self.owned_regdomain
             self.owned_regdomain = None

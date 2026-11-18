@@ -188,4 +188,12 @@ class NetworkTest(unittest.TestCase):
         interface['status'] = 'UP'
         self.assertEqual(network.client_network_health(BASE, [interface])[0], 'ready')
 
+    def test_networkmanager_never_releases_default_route_port(self):
+        with patch.object(network, 'NM_BUS') as bus, patch.object(network, 'nm_device') as lookup:
+            bus.is_socket.return_value = True
+            with patch.object(network, 'default_route_device', return_value=True):
+                with self.assertRaisesRegex(ValueError, 'WAN|маршрутом'):
+                    network.release_downstream('eth0', '192.168.50.1/24', False)
+            lookup.assert_not_called()
+
 if __name__=='__main__':unittest.main()
